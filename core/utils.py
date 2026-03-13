@@ -1,4 +1,4 @@
-import re
+﻿import re
 import io
 import ast
 import json
@@ -6,6 +6,7 @@ import httpx
 import base64
 import random
 import string
+
 import asyncio
 import traceback
 from time import time
@@ -17,7 +18,64 @@ from urllib.parse import urlparse, urlunparse
 
 from .log_config import logger
 
+async def generate_chunked_image_md(
+    image_data: str,
+    timestamp: int,
+    model: str,
+    thought_signature: str = None,
+    chunk_size: int = 16384,
+    mime_type: str = "image/png",
+):
+    """
+    将较大的图片 data URI 或 base64 转为 Markdown，并分块流式输出 SSE。
+
+    注意：
+    - 不先构造完整 markdown 大字符串，避免高并发时额外内存分配和事件循环阻塞。
+    - image_data 可以是完整 data URI，也可以是纯 base64 字符串。
+    """
+    if isinstance(image_data, str) and image_data.startswith("data:"):
+        image_data_uri = image_data
+    else:
+        image_data_uri = f"data:{mime_type};base64,{image_data}"
+
+    prefix = "\n\n![image]("
+    suffix = ")"
+
+    first_chunk_capacity = max(1, chunk_size - len(prefix))
+    first_chunk = prefix + image_data_uri[:first_chunk_capacity]
+    sse_string = await generate_sse_response(
+        timestamp,
+        model,
+        content=first_chunk,
+        thought_signature=thought_signature,
+    )
+    yield sse_string
+
+    sent = first_chunk_capacity
+    if sent < len(image_data_uri):
+        await asyncio.sleep(0)
+
+    while sent < len(image_data_uri):
+        chunk_content = image_data_uri[sent:sent + chunk_size]
+        sse_string = await generate_sse_response(
+            timestamp,
+            model,
+            content=chunk_content,
+        )
+        yield sse_string
+        sent += len(chunk_content)
+        if sent < len(image_data_uri):
+            await asyncio.sleep(0)
+
+    sse_string = await generate_sse_response(
+        timestamp,
+        model,
+        content=suffix,
+    )
+    yield sse_string
+
 def get_model_dict(provider):
+
     """
     构建模型别名到上游模型名的映射字典。
     
@@ -1108,9 +1166,13 @@ async def upload_image_to_0x0st(base64_image: str, max_size_mb: float = 10.0):
 
 
 
+
+
+
 if __name__ == "__main__":
     provider = {
         "base_url": "https://gateway.ai.cloudflare.com/v1/%7Baccount_id%7D/%7Bgateway_id%7D/google-vertex-ai",
         "engine": "vertex",
     }
     print(get_engine(provider))
+

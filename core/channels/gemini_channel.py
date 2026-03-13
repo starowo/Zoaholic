@@ -18,6 +18,7 @@ from ..utils import (
     generate_sse_response,
     generate_no_stream_response,
     end_of_line,
+    generate_chunked_image_md,
     upload_image_to_0x0st,
 )
 from ..response import check_response
@@ -884,18 +885,11 @@ async def fetch_gemini_response_stream(client, url, headers, payload, model, tim
                         yield ": streaming inline image\n\n"
 
                         logger.info("[Gemini] Returning inline base64 image via chunked stream")
-                        full_image_md = f"\n\n![image](data:image/png;base64,{image_base64})"
-                        chunk_size = 16384  # 将庞大的 base64 切割成 16KB 的小块流式发送
-                        for i in range(0, len(full_image_md), chunk_size):
-                            chunk_content = full_image_md[i:i+chunk_size]
-                            sse_string = await generate_sse_response(
-                                timestamp,
-                                model,
-                                content=chunk_content,
-                                thought_signature=thought_signature if i == 0 else None,
-                            )
+                        # 使用统一的 chunked helper 处理大图 MD 输出，避免构造巨大字符串并出让控制权
+                        async for sse_string in generate_chunked_image_md(
+                            image_base64, timestamp, model, thought_signature
+                        ):
                             yield sse_string
-                            await asyncio.sleep(0.001)  # 每次发送小块后让出 CPU 控制权，保障服务不卡顿
 
 
                         

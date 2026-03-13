@@ -18,6 +18,7 @@ from ..utils import (
     get_tools_mode,
     generate_sse_response,
     end_of_line,
+    generate_chunked_image_md,
     upload_image_to_0x0st,
 )
 from ..response import check_response
@@ -530,12 +531,10 @@ async def fetch_gpt_response_stream(client, url, headers, payload, model, timeou
                     openrouter_base64_image = safe_get(line, "choices", 0, "delta", "images", 0, "image_url", "url", default="")
                     if openrouter_base64_image:
                         image_data_uri = openrouter_base64_image if openrouter_base64_image.startswith("data:image/") else f"data:image/png;base64,{openrouter_base64_image}"
-                        full_image_md = f"\n\n![image]({image_data_uri})"
-                        chunk_size = 16384
-                        for i in range(0, len(full_image_md), chunk_size):
-                            sse_string = await generate_sse_response(timestamp, payload["model"], content=full_image_md[i:i+chunk_size])
+                        b64_pure = image_data_uri.split(",")[1] if "," in image_data_uri else image_data_uri
+                        # 使用统一 helper
+                        async for sse_string in generate_chunked_image_md(b64_pure, timestamp, payload["model"]):
                             yield sse_string
-                            await asyncio.sleep(0.001)
                         continue
 
 

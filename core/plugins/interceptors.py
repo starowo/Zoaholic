@@ -44,6 +44,7 @@ register_response_interceptor("my_plugin", my_response_interceptor, priority=50)
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 import asyncio
+from contextlib import asynccontextmanager
 import re
 
 from ..log_config import logger
@@ -664,3 +665,70 @@ async def apply_response_interceptors(
     return await get_interceptor_registry().apply_response_interceptors(
         response_chunk, engine, model, is_stream, enabled_plugins
     )
+
+# ==================== 透明 Client 包装 ====================
+
+class InterceptedClient:
+    """
+    httpx.AsyncClient 的透明包装。
+
+    在每次 HTTP 请求发出前，自动将 url 和 headers 传入请求拦截器链，
+    让已启用的插件有机会修改请求头（如认证方式转换）。
+
+    用于 models_adapter 等不经过 get_payload 的请求路径，
+    使其也能被插件拦截，无需修改任何渠道代码。
+
+    用法::
+
+        from core.plugins.interceptors import InterceptedClient
+
+        wrapped = InterceptedClient(client, engine, provider, enabled_plugins)
+        # 之后将 wrapped 当作普通 httpx.AsyncClient 使用即可
+    """
+
+    def __init__(
+        self,
+        client,
+        engine: str,
+        provider: Dict[str, Any],
+        enabled_plugins: Optional[List[str]] = None,
+    ):
+        self._client = client
+        self._engine = engine
+        self._provider = provider
+        self._enabled_plugins = enabled_plugins
+        api_key = provider.get("api", "")
+        self._api_key = api_key[0] if isinstance(api_key, list) and api_key else (api_key or "")
+
+    async def _intercept(self, url: str, headers: Optional[Dict] = None) -> Tuple[str, Dict]:
+        """对 url 和 headers 应用请求拦截器"""
+        headers = dict(headers or {})
+        if not self._enabled_plugins:
+            return url, headers
+        url, headers, _ = await apply_request_interceptors(
+            None, self._engine, self._provider, self._api_key,
+            str(url), headers, {},
+            self._enabled_plugins,
+        )
+        return url, headers
+
+    async def get(self, url, *, headers=None, **kwargs):
+        url, headers = await self._intercept(url, headers)
+        return await self._client.get(url, headers=headers, **kwargs)
+
+    async def post(self, url, *, headers=None, **kwargs):
+        url, headers = await self._intercept(url, headers)
+        return await self._client.post(url, headers=headers, **kwargs)
+
+    @asynccontextmanager
+    async def _stream_intercepted(self, method, url, *, headers=None, **kwargs):
+        url, headers = await self._intercept(url, headers)
+        async with self._client.stream(method, url, headers=headers, **kwargs) as response:
+            yield response
+
+    def stream(self, method, url, *, headers=None, **kwargs):
+        return self._stream_intercepted(method, url, headers=headers, **kwargs)
+
+    def __getattr__(self, name):
+        """未覆盖的属性和方法直接转发到原始 client"""
+        return getattr(self._client, name)

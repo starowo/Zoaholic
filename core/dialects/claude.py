@@ -330,7 +330,7 @@ async def render_claude_stream(canonical_sse_chunk: str) -> str:
         return "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 
     try:
-        canonical = json.loads(data_str)
+        canonical = await asyncio.to_thread(json.loads, data_str)
     except json.JSONDecodeError:
         return canonical_sse_chunk
 
@@ -351,7 +351,8 @@ async def render_claude_stream(canonical_sse_chunk: str) -> str:
                 "thinking": reasoning,
             },
         }
-        return f"event: content_block_delta\ndata: {json.dumps(claude_event, ensure_ascii=False)}\n\n"
+        json_data = await asyncio.to_thread(json.dumps, claude_event, ensure_ascii=False)
+        return f"event: content_block_delta\ndata: {json_data}\n\n"
 
     # 2. 处理文本
     content = delta.get("content") or ""
@@ -364,7 +365,8 @@ async def render_claude_stream(canonical_sse_chunk: str) -> str:
                 "text": content,
             },
         }
-        return f"event: content_block_delta\ndata: {json.dumps(claude_event, ensure_ascii=False)}\n\n"
+        json_data = await asyncio.to_thread(json.dumps, claude_event, ensure_ascii=False)
+        return f"event: content_block_delta\ndata: {json_data}\n\n"
 
     # 2. 处理工具调用开始
     tool_calls = delta.get("tool_calls") or []
@@ -392,8 +394,10 @@ async def render_claude_stream(canonical_sse_chunk: str) -> str:
                         "partial_json": tc["function"]["arguments"]
                     }
                 }
-                return f"event: content_block_start\ndata: {json.dumps(event_start, ensure_ascii=False)}\n\n" + \
-                       f"event: content_block_delta\ndata: {json.dumps(event_delta, ensure_ascii=False)}\n\n"
+                json_start = await asyncio.to_thread(json.dumps, event_start, ensure_ascii=False)
+                json_delta = await asyncio.to_thread(json.dumps, event_delta, ensure_ascii=False)
+                return f"event: content_block_start\ndata: {json_start}\n\n" + \
+                       f"event: content_block_delta\ndata: {json_delta}\n\n"
             return f"event: content_block_start\ndata: {json.dumps(event_start, ensure_ascii=False)}\n\n"
         
         # 只有 arguments，则是 delta
@@ -406,7 +410,8 @@ async def render_claude_stream(canonical_sse_chunk: str) -> str:
                     "partial_json": tc["function"]["arguments"]
                 }
             }
-            return f"event: content_block_delta\ndata: {json.dumps(event_delta, ensure_ascii=False)}\n\n"
+            json_delta = await asyncio.to_thread(json.dumps, event_delta, ensure_ascii=False)
+            return f"event: content_block_delta\ndata: {json_delta}\n\n"
 
     # 3. 处理完成
     if choices[0].get("finish_reason"):
@@ -420,7 +425,8 @@ async def render_claude_stream(canonical_sse_chunk: str) -> str:
                "output_tokens": canonical.get("usage", {}).get("completion_tokens", 0)
             }
         }
-        return f"event: message_delta\ndata: {json.dumps(event_msg_delta, ensure_ascii=False)}\n\n"
+        json_msg_delta = await asyncio.to_thread(json.dumps, event_msg_delta, ensure_ascii=False)
+        return f"event: message_delta\ndata: {json_msg_delta}\n\n"
 
     return ""
 

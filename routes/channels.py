@@ -82,6 +82,8 @@ async def fetch_channel_models(
         "aws_secret_key": provider_config.get("aws_secret_key", ""),
         # Cloudflare 特定配置
         "cf_account_id": provider_config.get("cf_account_id", ""),
+        # 透传 preferences（用于插件判断等）
+        "preferences": provider_config.get("preferences", {}),
     }
     
     # 获取代理配置
@@ -98,6 +100,13 @@ async def fetch_channel_models(
         async with app.state.client_manager.get_client(provider["base_url"], proxy) as client:
             # 设置超时，避免请求卡死
             import asyncio
+
+            # 包装 client，让请求拦截器能作用于 models_adapter 的请求
+            enabled_plugins = safe_get(provider, "preferences", "enabled_plugins", default=None)
+            if enabled_plugins:
+                from core.plugins.interceptors import InterceptedClient
+                client = InterceptedClient(client, engine, provider, enabled_plugins)
+
             models = await asyncio.wait_for(
                 channel.models_adapter(client, provider),
                 timeout=30.0

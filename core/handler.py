@@ -1082,12 +1082,22 @@ class ModelRequestHandler:
                 retry_enabled = (
                     auto_retry
                     and (
-                        status_code not in [400, 413]
+                        status_code not in [400, 413, 401, 403]
                         or urlparse(provider.get('base_url', '')).netloc == 'models.inference.ai.azure.com'
                     )
                 )
 
-                # 若还有剩余尝试次数，则进行自动重试（并对 429/5xx 做简单退避，避免瞬时打爆上游/卡死进程）
+                # 特定场景禁止重试：
+                # 1. 图像生成失败（no image was generated）通常是内容审核或模型能力问题，重试无效且增加负载
+                if "no image was generated" in error_message.lower():
+                    retry_enabled = False
+                
+                # 2. 图像模型遇到 429，通常意味着高并发触发了严格配额，重试会放大负载
+                is_image_model = "-image" in request_model_name.lower() or "image-generation" in request_model_name.lower()
+                if is_image_model and status_code == 429:
+                    retry_enabled = False
+
+                # 若还有剩余尝试次数，则进行自动重试
                 if retry_enabled and index < max_attempts:
                     if status_code in {429, 500, 502, 503, 504}:
                         base_delay = 0.5 if status_code == 429 else 0.2

@@ -330,7 +330,7 @@ async def render_gemini_stream(canonical_sse_chunk: str) -> str:
         return ""
 
     try:
-        canonical = json.loads(data_str)
+        canonical = await asyncio.to_thread(json.loads, data_str)
     except json.JSONDecodeError:
         return canonical_sse_chunk
 
@@ -376,7 +376,8 @@ async def render_gemini_stream(canonical_sse_chunk: str) -> str:
             "totalTokenCount": usage.get("total_tokens", 0),
         }
 
-    return f"data: {json.dumps(gemini_chunk, ensure_ascii=False)}\n\n"
+    json_data = await asyncio.to_thread(json.dumps, gemini_chunk, ensure_ascii=False)
+    return f"data: {json_data}\n\n"
 
 
 def parse_gemini_usage(data: Any) -> Optional[Dict[str, int]]:

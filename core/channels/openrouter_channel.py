@@ -122,6 +122,10 @@ async def fetch_openrouter_response_stream(client, url, headers, payload, model,
         buffer = ""
         async for chunk in response.aiter_text():
             buffer += chunk
+            # 避免 buffer 拼接操作独占 CPU
+            if len(buffer) > 50000:
+                await asyncio.sleep(0)
+
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 line = line.strip()
@@ -134,7 +138,7 @@ async def fetch_openrouter_response_stream(client, url, headers, payload, model,
                 
                 if line.startswith("data: "):
                     try:
-                        json_data = json.loads(line[6:])
+                        json_data = await asyncio.to_thread(json.loads, line[6:])
                         choices = json_data.get("choices", [])
                         if choices:
                             delta = choices[0].get("delta", {})

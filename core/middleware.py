@@ -450,5 +450,5 @@ class StatsMiddleware:
                 moderation_result += chunk
 
         # 解码并解析 JSON
-        moderation_data = json.loads(moderation_result.decode("utf-8"))
+        moderation_data = await asyncio.to_thread(json.loads, moderation_result.decode("utf-8"))
         return moderation_data

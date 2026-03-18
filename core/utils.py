@@ -18,6 +18,18 @@ from urllib.parse import urlparse, urlunparse
 
 from .log_config import logger
 
+# 本地 API Key 前缀：用于判断 provider 名是否为本地聚合器 Key
+# sk- 是历史前缀，zk- 是新版本前缀，两者都需要兼容
+LOCAL_API_KEY_PREFIXES = ("sk-", "zk-")
+
+def is_local_api_key(name: str) -> bool:
+    """
+    判断一个 provider 名称是否为本地 API Key（聚合器 Key）。
+    本地 Key 以 sk-（历史）或 zk-（新版）开头。
+    """
+    return name.startswith(LOCAL_API_KEY_PREFIXES)
+
+
 async def generate_chunked_image_md(
     image_data: str,
     timestamp: int,

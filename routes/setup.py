@@ -132,8 +132,8 @@ async def _upsert_admin_user(username: str, password: str, jwt_secret: str) -> N
 
 
 def _generate_admin_api_key() -> str:
-    # 尽量保持 sk- 前缀风格
-    return "sk-" + secrets.token_urlsafe(36)
+    # 使用 zk- 前缀
+    return "zk-" + secrets.token_urlsafe(36)
 
 
 def _select_admin_api_key_from_config(conf: dict) -> Optional[str]:

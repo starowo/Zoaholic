@@ -617,7 +617,7 @@ async def query_token_usage(
     for row in rows:
         usage_dict = dict(row)
         api_key = usage_dict.get("api_key", "")
-        # Mask API key (show prefix like sk-...xyz)
+        # Mask API key (show prefix like zk-...xyz)
         if api_key and len(api_key) > 7:
             prefix = api_key[:7]
             suffix = api_key[-4:]

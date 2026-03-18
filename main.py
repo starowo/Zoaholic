@@ -18,6 +18,7 @@ from core.log_config import logger
 from routes import api_router
 from core.env import env_bool
 from core.utils import parse_rate_limit, ThreadSafeCircularList, ApiKeyRateLimitRegistry
+from core.utils import is_local_api_key
 from core.block_watchdog import EventLoopBlockWatchdog
 from core.client_manager import ClientManager
 from core.channel_manager import ChannelManager
@@ -604,7 +605,7 @@ async def ensure_config(request: Request, call_next):
             api_key_model_list = item.get("model", [])
             for provider_rule in api_key_model_list:
                 provider_name = provider_rule.split("/")[0]
-                if provider_name.startswith("sk-") and provider_name in app.state.api_list:
+                if is_local_api_key(provider_name) and provider_name in app.state.api_list:
                     models_list = []
                     try:
                         # 构建请求头

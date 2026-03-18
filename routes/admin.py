@@ -59,7 +59,7 @@ async def generate_api_key():
     chars = string.ascii_letters + string.digits
     # 生成 48 个字符的随机字符串
     random_string = ''.join(secrets.choice(chars) for _ in range(48))
-    api_key = "sk-" + random_string
+    api_key = "zk-" + random_string
     return JSONResponse(content={"api_key": api_key})
 
 

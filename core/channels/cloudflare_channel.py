@@ -47,7 +47,10 @@ async def get_cloudflare_payload(request, engine, provider, api_key=None):
     # Cloudflare Workers AI URL 格式
     account_id = provider.get("account_id", "")
     base_url = provider.get("base_url", f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai")
-    url = base_url.rstrip('/') + f"/run/{original_model}"
+    if base_url.endswith('#'):
+        url = base_url[:-1].rstrip('/')
+    else:
+        url = base_url.rstrip('/') + f"/run/{original_model}"
     
     messages = []
     for msg in request.messages:

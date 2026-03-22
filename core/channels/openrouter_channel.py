@@ -49,7 +49,8 @@ async def get_openrouter_payload(request, engine, provider, api_key=None):
     if api_key:
         headers['Authorization'] = f'Bearer {api_key}'
     
-    url = provider.get("base_url", "https://openrouter.ai/api/v1").rstrip('/') + "/chat/completions"
+    from ..utils import resolve_base_url
+    url = resolve_base_url(provider.get("base_url", "https://openrouter.ai/api/v1"), "/chat/completions")
     
     messages = []
     for msg in request.messages:
@@ -187,7 +188,7 @@ async def fetch_openrouter_response_stream(client, url, headers, payload, model,
 
 async def fetch_openrouter_models(client, provider):
     """获取 OpenRouter 可用模型列表"""
-    base_url = provider.get("base_url", "https://openrouter.ai/api/v1").rstrip('/')
+    raw_base_url = provider.get("base_url", "https://openrouter.ai/api/v1")
     api_key = provider.get("api_key", "")
     
     headers = {
@@ -196,8 +197,9 @@ async def fetch_openrouter_models(client, provider):
     if api_key:
         headers['Authorization'] = f'Bearer {api_key}'
     
+    from ..utils import resolve_base_url
     try:
-        response = await client.get(f"{base_url}/models", headers=headers)
+        response = await client.get(resolve_base_url(raw_base_url, "/models"), headers=headers)
         if response.status_code == 200:
             data = response.json()
             models = data.get("data", [])

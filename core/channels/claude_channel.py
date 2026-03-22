@@ -28,6 +28,8 @@ from ..response import check_response
 def _normalize_claude_base_url(base_url: str) -> str:
     """归一化 Claude base_url，去除末尾的 /messages 端点路径，确保只保留到 /v1 层级。
     兼容旧配置 https://api.anthropic.com/v1/messages 和新配置 https://api.anthropic.com/v1。"""
+    if base_url.endswith('#'):
+        return base_url  # 保留 '#'，由 resolve_base_url 处理
     url = base_url.rstrip('/')
     if url.endswith('/v1/messages'):
         url = url[:-len('/messages')]
@@ -160,7 +162,8 @@ async def get_claude_passthrough_meta(request, engine, provider, api_key=None):
         "x-api-key": f"{api_key}",
         "anthropic-version": "2023-06-01",
     }
-    url = _normalize_claude_base_url(provider['base_url']) + '/messages'
+    from ..utils import resolve_base_url
+    url = resolve_base_url(_normalize_claude_base_url(provider['base_url']), '/messages')
 
     return url, headers, {}
 
@@ -183,7 +186,8 @@ async def get_claude_payload(request, engine, provider, api_key=None):
         "anthropic-version": "2023-06-01",
         "anthropic-beta": anthropic_beta,
     }
-    url = _normalize_claude_base_url(provider['base_url']) + '/messages'
+    from ..utils import resolve_base_url
+    url = resolve_base_url(_normalize_claude_base_url(provider['base_url']), '/messages')
 
     messages = []
     system_prompt = None
@@ -568,7 +572,10 @@ async def fetch_claude_response_stream(client, url, headers, payload, model, tim
 
 async def fetch_claude_models(client, provider):
     """获取 Anthropic Claude API 的模型列表"""
-    base_url = _normalize_claude_base_url(provider.get('base_url', 'https://api.anthropic.com/v1'))
+    from ..utils import resolve_base_url
+    raw_base_url = provider.get('base_url', 'https://api.anthropic.com/v1')
+    is_fixed = raw_base_url.endswith('#')
+    base_url = resolve_base_url(_normalize_claude_base_url(raw_base_url), '')
     api_key = provider.get('api')
     if isinstance(api_key, list):
         api_key = api_key[0] if api_key else None
@@ -583,8 +590,8 @@ async def fetch_claude_models(client, provider):
     models = []
     after_id = None
     while True:
-        url = f"{base_url}/models?limit=1000"
-        if after_id:
+        url = base_url if is_fixed else f"{base_url}/models?limit=1000"
+        if after_id and not is_fixed:
             url += f"&after_id={after_id}"
         response = await client.get(url, headers=headers)
         response.raise_for_status()

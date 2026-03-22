@@ -34,6 +34,8 @@ from ..response import check_response
 def _normalize_responses_base_url(base_url: str) -> str:
     """归一化 base_url，去除末尾的 /responses 端点路径，确保只保留到 /v1 层级。
     兼容旧配置 .../v1/responses 和新配置 .../v1。"""
+    if base_url.endswith('#'):
+        return base_url  # 保留 '#'，由 resolve_base_url 处理
     url = base_url.rstrip('/')
     if url.endswith('/v1/responses'):
         url = url[:-len('/responses')]
@@ -66,9 +68,10 @@ async def get_responses_passthrough_meta(request, engine, provider, api_key=None
     if api_key:
         headers['Authorization'] = f"Bearer {api_key}"
 
-    url = _normalize_responses_base_url(
+    from ..utils import resolve_base_url
+    url = resolve_base_url(_normalize_responses_base_url(
         provider.get('base_url', 'https://api.openai.com/v1')
-    ) + '/responses'
+    ), '/responses')
 
     return url, headers, {}
 
@@ -227,9 +230,10 @@ async def get_responses_payload(request, engine, provider, api_key=None):
     if api_key:
         headers['Authorization'] = f"Bearer {api_key}"
 
-    url = _normalize_responses_base_url(
+    from ..utils import resolve_base_url
+    url = resolve_base_url(_normalize_responses_base_url(
         provider.get('base_url', 'https://api.openai.com/v1')
-    ) + '/responses'
+    ), '/responses')
 
     # 构建 input 和 instructions
     input_items = []
@@ -760,7 +764,10 @@ async def fetch_responses_stream(client, url, headers, payload, model, timeout):
 
 async def fetch_responses_models(client, provider):
     """获取 Responses API 支持的模型列表"""
-    base_url = _normalize_responses_base_url(provider.get('base_url', 'https://api.openai.com/v1'))
+    from ..utils import resolve_base_url
+    raw_base_url = provider.get('base_url', 'https://api.openai.com/v1')
+    is_fixed = raw_base_url.endswith('#')
+    base_url = resolve_base_url(_normalize_responses_base_url(raw_base_url), '')
     api_key = provider.get('api')
     if isinstance(api_key, list):
         api_key = api_key[0] if api_key else None
@@ -769,7 +776,7 @@ async def fetch_responses_models(client, provider):
     if api_key:
         headers['Authorization'] = f'Bearer {api_key}'
 
-    models_url = f"{base_url}/models"
+    models_url = base_url if is_fixed else f"{base_url}/models"
 
     response = await client.get(models_url, headers=headers)
     response.raise_for_status()

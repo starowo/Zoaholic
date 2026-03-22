@@ -135,13 +135,18 @@ async def get_gemini_payload(request, engine, provider, api_key=None):
         sse_param = ""
     url = provider['base_url']
     parsed_url = urlparse(url)
+
+    # 如果 base_url 以 '#' 结尾，直接使用去掉 '#' 后的地址，跳过路径拼接
+    if provider['base_url'].endswith('#'):
+        url = provider['base_url'][:-1].rstrip('/')
+    else:
+        # 正常路径拼接
+        url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path.split('/models')[0].rstrip('/')}/models/{original_model}:{gemini_stream}{sse_param}"
+
     if "/v1beta" in parsed_url.path:
         api_version = "v1beta"
     else:
         api_version = "v1"
-
-    # 不再在 URL 中放置 key，改用请求头认证
-    url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path.split('/models')[0].rstrip('/')}/models/{original_model}:{gemini_stream}{sse_param}"
 
     messages = []
     systemInstruction = None
@@ -978,12 +983,13 @@ async def fetch_gemini_models(client, provider):
     """
     from ..log_config import logger
 
-    base_url = provider.get('base_url', 'https://generativelanguage.googleapis.com/v1beta').rstrip('/')
+    raw_base_url = provider.get('base_url', 'https://generativelanguage.googleapis.com/v1beta')
     api_key = provider.get('api')
     if isinstance(api_key, list):
         api_key = api_key[0] if api_key else None
 
-    url = f"{base_url}/models"
+    from ..utils import resolve_base_url
+    url = resolve_base_url(raw_base_url, '/models')
 
     headers = {
         'Content-Type': 'application/json',

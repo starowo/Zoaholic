@@ -586,7 +586,7 @@ async def fetch_gpt_response_stream(client, url, headers, payload, model, timeou
 
 async def fetch_openai_models(client, provider):
     """获取 OpenAI 兼容 API 的模型列表"""
-    base_url = provider.get('base_url', 'https://api.openai.com/v1').rstrip('/')
+    raw_base_url = provider.get('base_url', 'https://api.openai.com/v1')
     api_key = provider.get('api')
     if isinstance(api_key, list):
         api_key = api_key[0] if api_key else None
@@ -595,7 +595,8 @@ async def fetch_openai_models(client, provider):
     if api_key:
         headers['Authorization'] = f'Bearer {api_key}'
     
-    url = f"{base_url}/models"
+    from ..utils import resolve_base_url
+    url = resolve_base_url(raw_base_url, '/models')
     response = await client.get(url, headers=headers)
     response.raise_for_status()
     

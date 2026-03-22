@@ -953,7 +953,8 @@ export default function Channels() {
                     </div>
                     <div>
                       <label className="text-sm font-medium text-foreground mb-1.5 block">API 地址 (Base URL)</label>
-                      <input type="url" value={formData.base_url} onChange={e => updateFormData('base_url', e.target.value)} placeholder="留空则使用渠道默认地址" className="w-full bg-background border border-border focus:border-primary px-3 py-2 rounded-lg text-sm font-mono outline-none text-foreground" />
+                      <input type="text" value={formData.base_url} onChange={e => updateFormData('base_url', e.target.value)} placeholder="留空则使用渠道默认地址，末尾加 # 则不拼接路径后缀" className="w-full bg-background border border-border focus:border-primary px-3 py-2 rounded-lg text-sm font-mono outline-none text-foreground" />
+                      <span className="text-xs text-muted-foreground mt-1 block">{'末尾加 # 可直接使用完整地址，不拼接路径后缀（如 https://example.com/v1/chat#）'}</span>
                     </div>
                     <div>
                       <label className="text-sm font-medium text-foreground mb-1.5 block">模型前缀 (可选)</label>

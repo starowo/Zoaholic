@@ -1,4 +1,4 @@
-﻿import re
+﻿﻿import re
 import io
 import ast
 import json
@@ -131,6 +131,25 @@ def get_model_dict(provider):
                 
     return model_dict
 
+
+def resolve_base_url(base_url: str, suffix: str) -> str:
+    """解析 base_url 并拼接后缀。
+
+    当 base_url 以 '#' 结尾时，去掉 '#' 后直接使用该地址，不拼接 suffix。
+    这允许用户通过在 base_url 末尾加 '#' 来精确指定完整的请求地址。
+
+    示例:
+        resolve_base_url("https://example.com/v1", "/chat/completions")
+        → "https://example.com/v1/chat/completions"
+
+        resolve_base_url("https://example.com/v10/chat#", "/chat/completions")
+        → "https://example.com/v10/chat"
+    """
+    if base_url.endswith('#'):
+        return base_url[:-1].rstrip('/')
+    return base_url.rstrip('/') + suffix
+
+
 class BaseAPI:
     def __init__(
         self,
@@ -138,6 +157,22 @@ class BaseAPI:
     ):
         if api_url == "":
             api_url = "https://api.openai.com/v1/chat/completions"
+
+        # 如果 URL 以 '#' 结尾，表示用户希望直接使用该地址，不做任何路径拼接
+        if api_url.endswith('#'):
+            fixed_url = api_url[:-1].rstrip('/')
+            self.source_api_url = fixed_url
+            self.base_url = fixed_url
+            self.v1_url = fixed_url
+            self.v1_models = fixed_url
+            self.chat_url = fixed_url
+            self.image_url = fixed_url
+            self.audio_transcriptions = fixed_url
+            self.moderations = fixed_url
+            self.embeddings = fixed_url
+            self.audio_speech = fixed_url
+            return
+
         self.source_api_url: str = api_url
         parsed_url = urlparse(self.source_api_url)
         # print("parsed_url", parsed_url)

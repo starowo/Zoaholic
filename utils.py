@@ -1187,6 +1187,9 @@ def post_all_models(api_index, config, api_list, models_list):
                             # 如果渠道配置了 model_prefix，只展示带前缀的模型名
                             prefix = provider_item.get('model_prefix', '').strip()
                             for model_item in model_dict.keys():
+                                # 跳过通配符标记，"*" 不是真实模型名
+                                if model_item == "*":
+                                    continue
                                 # 过滤掉作为别名映射上游的模型名
                                 if model_item in upstream_candidates:
                                     continue
@@ -1249,6 +1252,9 @@ def post_all_models(api_index, config, api_list, models_list):
                             # 如果渠道配置了 model_prefix，只展示带前缀的模型名
                             prefix = provider_item.get('model_prefix', '').strip()
                             for model_item in model_dict.keys():
+                                # 跳过通配符标记，"*" 不是真实模型名
+                                if model_item == "*":
+                                    continue
                                 # 过滤掉作为别名映射上游的模型名
                                 if model_item in upstream_candidates:
                                     continue

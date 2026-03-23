@@ -119,6 +119,9 @@ async def get_provider_rules(
             # 如果渠道配置了 model_prefix，只返回带前缀的模型名
             prefix = provider.get('model_prefix', '').strip()
             for model in model_dict.keys():
+                # 跳过通配符标记，"*" 渠道不能在 all 模式下枚举
+                if model == "*":
+                    continue
                 # 过滤掉被重定向的上游原名
                 if model in upstream_candidates:
                     continue
@@ -154,11 +157,17 @@ async def get_provider_rules(
 
             # api_keys 中 model 为 provider_name/* 时，表示所有模型都匹配
             if model_name_split == "*":
-                if request_model in models_list:
+                # 渠道配置了 model: ["*"] 时，接受任意模型名透传
+                # 但如果请求模型名本身以 * 结尾（如 gpt-4*），优先走下方的前缀展开逻辑
+                if "*" in models_list and not request_model.endswith("*"):
+                    provider_rules.append(provider_name + "/" + request_model)
+                elif request_model in models_list:
                     provider_rules.append(provider_name + "/" + request_model)
 
                 # 如果请求模型名： gpt-4* ，则匹配所有以模型名开头且不以 * 结尾的模型
                 for models_list_model in models_list:
+                    if models_list_model == "*":
+                        continue
                     if request_model.endswith("*") and models_list_model.startswith(request_model.rstrip("*")):
                         provider_rules.append(provider_name + "/" + models_list_model)
 
@@ -226,8 +235,33 @@ def get_provider_list(
                 if not model_dict:
                     continue
                 model_name_split = "/".join(item.split("/")[1:])
-                if "/" in item and provider['provider'] == provider_name and model_name_split in model_dict.keys():
-                    if request_model in model_dict.keys() and model_name_split == request_model:
+                is_wildcard_channel = "*" in model_dict
+
+                if "/" in item and provider['provider'] == provider_name and (model_name_split in model_dict.keys() or is_wildcard_channel):
+                    # 通配符渠道：为未在 model_dict 中列出的模型名构建透传映射
+                    if is_wildcard_channel and model_name_split not in model_dict:
+                        # 构建临时 model_dict 副本，注入当前请求模型的映射
+                        wildcard_model_dict = dict(model_dict)
+                        wildcard_model_dict[request_model] = request_model
+                        new_provider = {
+                            "provider": provider["provider"],
+                            "base_url": provider.get("base_url", ""),
+                            "api": provider.get("api", None),
+                            "model": [{request_model: request_model}],
+                            "preferences": provider.get("preferences", {}),
+                            "tools": provider.get("tools", False),
+                            "_model_dict_cache": wildcard_model_dict,
+                            "project_id": provider.get("project_id", None),
+                            "private_key": provider.get("private_key", None),
+                            "client_email": provider.get("client_email", None),
+                            "cf_account_id": provider.get("cf_account_id", None),
+                            "aws_access_key": provider.get("aws_access_key", None),
+                            "aws_secret_key": provider.get("aws_secret_key", None),
+                            "engine": provider.get("engine", None),
+                            "groups": provider.get("groups", ["default"]),
+                        }
+                        provider_list.append(new_provider)
+                    elif request_model in model_dict.keys() and model_name_split == request_model:
                         new_provider = {
                             "provider": provider["provider"],
                             "base_url": provider.get("base_url", ""),

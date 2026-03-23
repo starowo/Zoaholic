@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Server, Terminal, Key, Settings as SettingsIcon, LogOut, FileText, Puzzle, Sun, Moon, Laptop, Menu, X, FolderOpen } from 'lucide-react';
+import { LayoutDashboard, Server, Terminal, Key, Settings as SettingsIcon, LogOut, FileText, Puzzle, Sun, Moon, Laptop, Menu, X, FolderOpen, Github } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 
@@ -65,6 +65,15 @@ function NavContent({
             <Moon className="w-4 h-4" />
           </button>
         </div>
+
+        <a
+          href="https://github.com/HCPTangHY/Zoaholic"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-3 px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Github className="w-5 h-5" /> GitHub
+        </a>
 
         <button
           onClick={logout}

@@ -365,17 +365,17 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">数据看板</h1>
-          <p className="text-muted-foreground mt-1">系统网关的实时监控与数据分析。</p>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">数据看板</h1>
+          <p className="text-muted-foreground mt-1 text-sm sm:text-base">系统网关的实时监控与数据分析。</p>
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center bg-card border border-border rounded-lg p-1">
+          <div className="flex items-center bg-card border border-border rounded-lg p-1 overflow-x-auto">
             {TIME_RANGES.map(range => (
               <button
                 key={range.value}
                 onClick={() => setTimeRange(range.value)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${timeRange === range.value
+                className={`px-2 sm:px-3 py-1.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${timeRange === range.value
                     ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                   }`}

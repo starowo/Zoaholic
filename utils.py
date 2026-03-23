@@ -1323,6 +1323,9 @@ def get_all_models(config, allowed_groups=None):
         prefix = provider.get('model_prefix', '').strip()
         
         for model in model_dict.keys():
+            # 跳过通配符标记，"*" 不是真实模型名
+            if model == "*":
+                continue
             # 过滤掉作为别名映射上游的模型名
             if model in upstream_candidates:
                 continue

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Key, LogIn } from 'lucide-react';
+import { Activity, Key, LogIn, Github } from 'lucide-react';
 
 export default function Login() {
   const [username, setUsername] = useState('admin');
@@ -62,7 +62,7 @@ export default function Login() {
 
       login(token, 'admin');
       navigate('/');
-    } catch (err) {
+    } catch {
       setError('网络错误，请检查后端服务是否正常启动');
     } finally {
       setLoading(false);
@@ -121,6 +121,17 @@ export default function Login() {
             </button>
           </div>
         </form>
+
+        <div className="flex justify-center mt-6">
+          <a
+            href="https://github.com/HCPTangHY/Zoaholic"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Github className="w-4 h-4" /> GitHub
+          </a>
+        </div>
       </div>
     </div>
   );

@@ -3,8 +3,8 @@ import { useAuthStore } from '../store/authStore';
 import { apiFetch } from '../lib/api';
 import {
   Key, Plus, RefreshCw, Copy, Trash2, Edit, Save, X, Search,
-  Folder, Clock, CheckCircle2, AlertCircle, AlertTriangle,
-  Wand2, Wallet, Brain, Download, Check, CopyCheck
+  Folder, CheckCircle2, AlertCircle, AlertTriangle,
+  Wand2, Wallet, Brain, Download, Check
 } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 
@@ -20,6 +20,9 @@ interface ApiKeyData {
     credits?: number;
     created_at?: string;
     rate_limit?: string;
+    name?: string;
+    group?: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     [key: string]: any;
   };
 }
@@ -92,6 +95,7 @@ export default function Admin() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, []);
 
   // ========== Sheet Handlers ==========
@@ -151,7 +155,7 @@ export default function Admin() {
       if (data.api_key) {
         setFormApi(data.api_key);
       }
-    } catch (err) {
+    } catch {
       alert('生成密钥失败');
     }
   };
@@ -211,6 +215,7 @@ export default function Admin() {
       }
 
       const data = await res.json();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const models = (data.models || []).map((m: any) => m.id || m).filter(Boolean);
 
       if (models.length === 0) {
@@ -223,7 +228,7 @@ export default function Admin() {
       const existing = new Set(formModels);
       setSelectedModels(new Set(models.filter((m: string) => existing.has(m))));
       setIsFetchModelsOpen(true);
-    } catch (err) {
+    } catch {
       alert('获取模型失败');
     } finally {
       setFetchingModels(false);
@@ -274,6 +279,7 @@ export default function Admin() {
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const target: any = { api: formApi.trim() };
 
     if (formName.trim()) target.name = formName.trim();
@@ -282,6 +288,7 @@ export default function Admin() {
     if (formModels.length > 0) target.model = formModels;
 
     // Preferences
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const prefs: any = {};
     if (formCredits.trim()) {
       const num = Number(formCredits);
@@ -317,7 +324,7 @@ export default function Admin() {
       } else {
         alert('保存失败');
       }
-    } catch (err) {
+    } catch {
       alert('网络错误');
     }
   };
@@ -341,7 +348,7 @@ export default function Admin() {
       } else {
         alert('删除失败');
       }
-    } catch (err) {
+    } catch {
       alert('网络错误');
     }
   };
@@ -366,7 +373,7 @@ export default function Admin() {
         const data = await res.json().catch(() => ({}));
         alert(`清空失败: ${data.detail || res.status}`);
       }
-    } catch (err) {
+    } catch {
       alert('网络错误');
     }
   };
@@ -397,7 +404,7 @@ export default function Admin() {
         const data = await res.json().catch(() => ({}));
         alert(`充值失败: ${data.detail || res.status}`);
       }
-    } catch (err) {
+    } catch {
       alert('网络错误');
     }
   };
@@ -429,31 +436,79 @@ export default function Admin() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500 font-sans">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">API 密钥管理</h1>
-          <p className="text-muted-foreground mt-1">管理调用 Zoaholic 网关的下游 API Key、额度与权限</p>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">API 密钥管理</h1>
+          <p className="text-muted-foreground mt-1 text-sm sm:text-base">管理调用 Zoaholic 网关的下游 API Key、额度与权限</p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={fetchData} className="p-2 text-muted-foreground hover:text-foreground bg-card border border-border rounded-lg">
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button onClick={fetchData} className="p-2 text-muted-foreground hover:text-foreground bg-card border border-border rounded-lg flex-shrink-0">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
           <button
             onClick={handleClearAllKeys}
             disabled={keys.length === 0}
-            className="px-3 py-2 text-sm font-medium bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/20 rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-2 text-sm font-medium bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/20 rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed flex-1 sm:flex-none justify-center"
             title="一键清空全部 API Keys"
           >
-            <Trash2 className="w-4 h-4" /> 清空全部
+            <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">清空全部</span><span className="sm:hidden">清空</span>
           </button>
-          <button onClick={() => openSheet()} className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-lg flex items-center gap-2 font-medium">
-            <Plus className="w-4 h-4" /> 新增 API Key
+          <button onClick={() => openSheet()} className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-lg flex items-center gap-2 font-medium flex-1 sm:flex-none justify-center">
+            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">新增 API Key</span><span className="sm:hidden">新增</span>
           </button>
         </div>
       </div>
 
       {/* Table */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
+      {/* Mobile Card List */}
+      <div className="md:hidden space-y-4">
+        {loading && keys.length === 0 ? (
+          <div className="p-8 text-center text-muted-foreground">加载密钥数据...</div>
+        ) : keys.length === 0 ? (
+          <div className="p-12 text-center text-muted-foreground">
+            <Key className="w-12 h-12 mb-3 opacity-50 mx-auto" />
+            <h3 className="text-lg font-medium text-foreground">暂无 API 密钥</h3>
+            <p className="text-sm mt-1 mb-4">创建您的第一个密钥以允许客户端接入</p>
+            <button onClick={() => openSheet()} className="text-primary hover:underline text-sm font-medium">+ 新增 API Key</button>
+          </div>
+        ) : (
+          keys.map((keyObj, idx) => {
+            const status = getStatusInfo(keyObj.api);
+            const credits = getCreditsInfo(keyObj.api);
+            const name = keyObj.name || keyObj.preferences?.name || '未命名密钥';
+            const groups = keyObj.groups || (keyObj.group ? [keyObj.group] : ['default']);
+            return (
+              <div key={idx} className="bg-card border border-border rounded-xl p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-foreground truncate">{name}</div>
+                    <div className="text-xs text-muted-foreground font-mono mt-1 flex items-center gap-1.5">
+                      <Key className="w-3 h-3 flex-shrink-0" />
+                      {keyObj.api.slice(0, 7)}...{keyObj.api.slice(-4)}
+                      <button onClick={() => copyToClipboard(keyObj.api)} className="text-muted-foreground/60 hover:text-foreground"><Copy className="w-3 h-3" /></button>
+                    </div>
+                  </div>
+                  <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium flex-shrink-0 ${status.cls}`}>{status.icon} {status.label}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
+                  <span className={`px-2 py-0.5 rounded font-medium ${keyObj.role === 'admin' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400' : 'bg-muted text-muted-foreground'}`}>{keyObj.role || 'user'}</span>
+                  {groups.map(g => (<span key={g} className="flex items-center gap-1 bg-muted text-foreground px-1.5 py-0.5 rounded"><Folder className="w-3 h-3" />{g}</span>))}
+                  <span className="text-muted-foreground">{credits.text}</span>
+                </div>
+                <div className="flex items-center justify-end gap-1 pt-3 border-t border-border">
+                  <button onClick={() => openCreditsDialog(keyObj.api)} className="p-1.5 text-emerald-600 dark:text-emerald-500 hover:bg-emerald-500/10 rounded-md" title="充值"><Wallet className="w-4 h-4" /></button>
+                  <button onClick={() => openSheet(null, keyObj)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md" title="复制"><Copy className="w-4 h-4" /></button>
+                  <button onClick={() => openSheet(idx)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md" title="编辑"><Edit className="w-4 h-4" /></button>
+                  <button onClick={() => handleDelete(idx)} className="p-1.5 text-red-600 dark:text-red-500 hover:bg-red-500/10 rounded-md" title="删除"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Desktop Table */}
+      <div className="hidden md:block bg-card border border-border rounded-xl overflow-hidden">
         {loading && keys.length === 0 ? (
           <div className="p-12 flex flex-col items-center justify-center text-muted-foreground">
             <RefreshCw className="w-8 h-8 animate-spin mb-3" />
@@ -560,7 +615,7 @@ export default function Admin() {
       <Dialog.Root open={isSheetOpen} onOpenChange={setIsSheetOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/60 z-40" />
-          <Dialog.Content className="fixed right-0 top-0 h-full w-[560px] bg-background border-l border-border shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-300">
+          <Dialog.Content className="fixed right-0 top-0 h-full w-full sm:w-[560px] bg-background border-l border-border shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-300">
             <div className="p-5 border-b border-border flex justify-between items-center bg-muted/30">
               <Dialog.Title className="text-lg font-bold text-foreground flex items-center gap-2">
                 <Key className="w-5 h-5 text-primary" />
@@ -734,7 +789,7 @@ export default function Admin() {
       <Dialog.Root open={isFetchModelsOpen} onOpenChange={setIsFetchModelsOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-h-[80vh] bg-background border border-border rounded-xl shadow-2xl z-50 flex flex-col">
+          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-w-[95vw] max-h-[80vh] bg-background border border-border rounded-xl shadow-2xl z-50 flex flex-col">
             <div className="p-5 border-b border-border">
               <Dialog.Title className="text-lg font-bold text-foreground">选择模型</Dialog.Title>
               <p className="text-sm text-muted-foreground mt-1">当前分组: {formGroups.join(', ')}</p>
@@ -795,7 +850,7 @@ export default function Admin() {
       <Dialog.Root open={isCreditsOpen} onOpenChange={setIsCreditsOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] bg-background border border-border rounded-xl shadow-2xl z-50 p-6">
+          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] max-w-[95vw] bg-background border border-border rounded-xl shadow-2xl z-50 p-6">
             <Dialog.Title className="text-lg font-bold text-foreground flex items-center gap-2 mb-4">
               <Wallet className="w-5 h-5 text-emerald-500" /> 为 API Key 添加额度
             </Dialog.Title>

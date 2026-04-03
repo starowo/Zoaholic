@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useState, KeyboardEvent, ClipboardEvent } from 'react';
+import { useEffect, useState, useRef, KeyboardEvent, ClipboardEvent } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { apiFetch } from '../lib/api';
 import {
@@ -72,6 +72,91 @@ const SCHEDULE_ALGORITHMS = [
   { value: 'smart_round_robin', label: '智能轮询 (Smart)' },
 ];
 
+// ── 格式化倒计时 ──
+function formatCountdown(seconds: number) {
+  if (seconds <= 0) return '即将恢复';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+// ── SVG 边框进度组件（文件顶层，避免每次渲染重建） ──
+function CoolingBorderSvg({ wrapperRef, progress }: { wrapperRef: React.RefObject<HTMLDivElement | null>; progress: number }) {
+  const [d, setD] = useState('');
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    const w = el.offsetWidth, h = el.offsetHeight, r = 7, inset = 1;
+    const rw = w - 2 * inset, rh = h - 2 * inset, x = inset, y = inset;
+    setSize({ w, h });
+    setD([
+      `M ${x + r} ${y}`,
+      `L ${x + rw - r} ${y}`,
+      `A ${r} ${r} 0 0 1 ${x + rw} ${y + r}`,
+      `L ${x + rw} ${y + rh - r}`,
+      `A ${r} ${r} 0 0 1 ${x + rw - r} ${y + rh}`,
+      `L ${x + r} ${y + rh}`,
+      `A ${r} ${r} 0 0 1 ${x} ${y + rh - r}`,
+      `L ${x} ${y + r}`,
+      `A ${r} ${r} 0 0 1 ${x + r} ${y}`,
+      'Z'
+    ].join(' '));
+  }, [wrapperRef]);
+  if (!d) return null;
+  const pct = Math.max(0, Math.min(100, progress));
+  return (
+    <svg
+      className="absolute top-0 left-0 w-full h-full pointer-events-none z-[1]"
+      viewBox={`0 0 ${size.w} ${size.h}`}
+      preserveAspectRatio="none"
+    >
+      <path
+        d={d}
+        fill="none"
+        stroke="#ef4444"
+        strokeWidth={2}
+        strokeLinecap="round"
+        pathLength={100}
+        strokeDasharray={`${pct} 100`}
+        strokeDashoffset={`${-(100 - pct)}`}
+      />
+    </svg>
+  );
+}
+
+// ── 冷却中 Key 行组件（文件顶层，安全使用 useRef） ──
+function CoolingKeyRow({ idx, keyObj, remainSec, totalDuration, onRecover, onToggle, onTest, onDelete }: {
+  idx: number; keyObj: { key: string; disabled: boolean };
+  remainSec: number; totalDuration: number;
+  onRecover: () => void; onToggle: () => void; onTest: () => void; onDelete: () => void;
+}) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const progressPct = totalDuration > 0 ? Math.max(0, Math.min(100, (remainSec / totalDuration) * 100)) : 0;
+  return (
+    <div ref={wrapperRef} className="relative rounded-lg">
+      <CoolingBorderSvg wrapperRef={wrapperRef} progress={progressPct} />
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-zinc-800 bg-zinc-900 relative">
+        <span className="text-xs text-muted-foreground w-4 text-right">{idx + 1}</span>
+        <span className="flex-1 text-sm font-mono min-w-0 truncate text-red-300 line-through decoration-red-500/40 relative">
+          {keyObj.key || 'sk-...'}
+          <span className="absolute inset-0 flex items-center justify-center">
+            <span className="text-[11px] font-semibold text-red-400 bg-zinc-900/85 rounded px-2 py-0.5">{formatCountdown(remainSec)}</span>
+          </span>
+        </span>
+        <button onClick={onRecover} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 cursor-pointer flex-shrink-0">恢复</button>
+        <button onClick={onToggle} className="text-muted-foreground" title="禁用"><ToggleRight className="w-5 h-5" /></button>
+        <button onClick={onTest} disabled={!keyObj.key.trim()} className="text-blue-600 dark:text-blue-400 disabled:opacity-50"><Play className="w-4 h-4" /></button>
+        <button onClick={onDelete} className="text-red-500 hover:text-red-400 ml-1"><Trash2 className="w-4 h-4" /></button>
+      </div>
+    </div>
+  );
+}
+
+
 export default function Channels() {
   const [providers, setProviders] = useState<any[]>([]);
   const [channelTypes, setChannelTypes] = useState<ChannelOption[]>([]);
@@ -103,11 +188,33 @@ export default function Channels() {
   const [selectedModels, setSelectedModels] = useState<Set<string>>(() => new Set());
   const [modelSearchQuery, setModelSearchQuery] = useState('');
 
+  // ── Key 运行时状态 ──
+  const [runtimeKeyStatus, setRuntimeKeyStatus] = useState<Record<string, { auto_disabled: { key: string; remaining_seconds: number; duration: number; reason: string }[]; cooling: any[] }>>({});
+  const [localCountdowns, setLocalCountdowns] = useState<Record<string, Record<string, { remaining: number; duration: number }>>>({}); // provider -> key -> {remaining, duration}
+
   const { token } = useAuthStore();
 
   const fetchInitialData = async () => {
     try {
       const headers = { Authorization: `Bearer ${token}` };
+      // 同时获取运行时 Key 状态
+      apiFetch('/v1/channels/key_status', { headers }).then(r => r.ok ? r.json() : {}).then(d => {
+        const data = d || {};
+        setRuntimeKeyStatus(data);
+        // 初始化本地倒计时
+        const countdowns: Record<string, Record<string, { remaining: number; duration: number }>> = {};
+        for (const [prov, info] of Object.entries(data) as any) {
+          countdowns[prov] = {};
+          for (const item of (info.auto_disabled || [])) {
+            countdowns[prov][item.key] = {
+              remaining: item.remaining_seconds,
+              duration: item.duration || 0,
+            };
+          }
+        }
+        setLocalCountdowns(countdowns);
+      }).catch(() => {});
+
       const [configRes, typesRes, pluginsRes] = await Promise.all([
         apiFetch('/v1/api_config', { headers }),
         apiFetch('/v1/channels', { headers }),
@@ -145,11 +252,56 @@ export default function Channels() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 刷新运行时 Key 状态（供按需调用：打开编辑面板、恢复 Key、倒计时归零时）
+  const refreshKeyStatus = async () => {
+    try {
+      const res = await apiFetch('/v1/channels/key_status', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      setRuntimeKeyStatus(data || {});
+      const countdowns: Record<string, Record<string, { remaining: number; duration: number }>> = {};
+      for (const [prov, info] of Object.entries(data || {}) as any) {
+        countdowns[prov] = {};
+        for (const item of (info.auto_disabled || [])) {
+          countdowns[prov][item.key] = {
+            remaining: item.remaining_seconds,
+            duration: item.duration || 0,
+          };
+        }
+      }
+      setLocalCountdowns(countdowns);
+    } catch { /* ignore */ }
+  };
+
+  // 本地 1 秒倒计时，减少网络请求
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLocalCountdowns(prev => {
+        const next = { ...prev };
+        let anyExpired = false;
+        for (const prov of Object.keys(next)) {
+          for (const key of Object.keys(next[prov])) {
+            const entry = next[prov][key];
+            if (entry.remaining > 0) {
+              next[prov] = { ...next[prov], [key]: { ...entry, remaining: entry.remaining - 1 } };
+              if (entry.remaining - 1 <= 0) anyExpired = true;
+            }
+          }
+        }
+        if (anyExpired) setTimeout(() => refreshKeyStatus(), 500);
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const openModal = (provider: any = null, index: number | null = null) => {
     setOriginalIndex(index);
     setGroupInput('');
     setModelInput('');
     setShowPluginSheet(false);
+    refreshKeyStatus();
 
     if (provider) {
       const parseApiKey = (keyStr: string) => {
@@ -832,10 +984,11 @@ export default function Channels() {
               <tr>
                 <th className="px-4 py-3 w-[18%]">名称</th>
                 <th className="px-4 py-3 w-[15%]">分组 / 类型</th>
-                <th className="px-4 py-3 w-[12%]">插件</th>
+                <th className="px-4 py-3 w-[8%] text-center">Keys</th>
+                <th className="px-4 py-3 w-[10%]">插件</th>
                 <th className="px-4 py-3 w-[10%] text-center">状态</th>
                 <th className="px-4 py-3 w-[10%] text-center">权重</th>
-                <th className="px-4 py-3 w-[35%] text-right">操作</th>
+                <th className="px-4 py-3 w-[29%] text-right">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border text-sm">
@@ -844,6 +997,16 @@ export default function Channels() {
                 const groups = Array.isArray(p.groups) ? p.groups : p.group ? [p.group] : ['default'];
                 const plugins = p.preferences?.enabled_plugins || [];
                 const weight = p.preferences?.weight ?? p.weight ?? 0;
+
+                // Key 统计
+                const apiRaw = Array.isArray(p.api) ? p.api : (typeof p.api === 'string' && p.api.trim() ? [p.api] : []);
+                const totalKeys = apiRaw.length;
+                const configDisabledKeys = apiRaw.filter((k: any) => typeof k === 'string' && k.startsWith('!')).length;
+                const rtStatus = runtimeKeyStatus[p.provider];
+                const rtDisabledCount = rtStatus?.auto_disabled?.length || 0;
+                const enabledKeys = totalKeys - configDisabledKeys;
+                const effectiveEnabled = Math.max(0, enabledKeys - rtDisabledCount);
+                const hasKeyIssue = configDisabledKeys > 0 || rtDisabledCount > 0;
 
                 return (
                   <tr key={idx} className={`transition-colors ${isEnabled ? 'hover:bg-muted/50' : 'bg-muted/30 opacity-60'}`}>
@@ -870,6 +1033,20 @@ export default function Channels() {
                         </div>
                         <span className="text-xs text-muted-foreground font-mono">{p.engine || 'openai'}</span>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {totalKeys > 0 ? (
+                        <span
+                          className={`text-xs font-mono px-1.5 py-0.5 rounded ${
+                            hasKeyIssue ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'
+                          }`}
+                          title={`可用: ${effectiveEnabled} / 总计: ${totalKeys}${configDisabledKeys > 0 ? ` (配置禁用: ${configDisabledKeys})` : ''}${rtDisabledCount > 0 ? ` (自动禁用: ${rtDisabledCount})` : ''}`}
+                        >
+                          {effectiveEnabled}/{totalKeys}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/50">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {plugins.length > 0 ? (
@@ -1002,7 +1179,16 @@ export default function Channels() {
                 {/* 2. API Keys */}
                 <section>
                   <div className="flex items-center justify-between text-sm font-semibold text-foreground mb-2 border-b border-border pb-2">
-                    <span className="flex items-center gap-2"><Settings2 className="w-4 h-4 text-emerald-500" /> API Keys</span>
+                    <span className="flex items-center gap-2">
+                      <Settings2 className="w-4 h-4 text-emerald-500" /> API Keys
+                      {formData.api_keys.length > 0 && (() => {
+                        const cfgEnabled = formData.api_keys.filter(k => !k.disabled).length;
+                        const rtCount = runtimeKeyStatus[formData.provider]?.auto_disabled?.length || 0;
+                        const eff = Math.max(0, cfgEnabled - rtCount);
+                        const issue = formData.api_keys.some(k => k.disabled) || rtCount > 0;
+                        return <span className={`text-xs font-normal font-mono px-1.5 py-0.5 rounded ${issue ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'}`}>{eff}/{formData.api_keys.length}</span>;
+                      })()}
+                    </span>
                     <div className="flex items-center gap-2 text-xs">
                       <button onClick={copyAllKeys} className="text-muted-foreground hover:text-foreground flex items-center gap-1"><Copy className="w-3 h-3" /> 复制全部</button>
                       <button
@@ -1025,31 +1211,61 @@ export default function Channels() {
                     </div>
                   </div>
                   <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                    {formData.api_keys.map((keyObj, idx) => (
-                      <div key={idx} className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${keyObj.disabled ? 'bg-muted/30 border-border opacity-60' : 'bg-muted/50 border-border'}`}>
-                        <span className="text-xs text-muted-foreground w-4 text-right">{idx + 1}</span>
-                        <input
-                          type="text"
-                          value={keyObj.key}
-                          onChange={e => updateKey(idx, e.target.value)}
-                          onPaste={e => handleKeyPaste(e, idx)}
-                          placeholder="sk-..."
-                          className={`flex-1 bg-transparent border-none text-sm font-mono outline-none min-w-0 ${keyObj.disabled ? 'text-muted-foreground line-through' : 'text-foreground'}`}
-                        />
-                        <button onClick={() => toggleKeyDisabled(idx)} className={keyObj.disabled ? 'text-muted-foreground' : 'text-emerald-500'} title={keyObj.disabled ? "启用" : "禁用"}>
-                          {keyObj.disabled ? <ToggleLeft className="w-5 h-5" /> : <ToggleRight className="w-5 h-5" />}
-                        </button>
-                        <button
-                          onClick={() => openKeyTestDialog(idx)}
-                          disabled={!keyObj.key.trim()}
-                          className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="测试此 Key"
-                        >
-                          <Play className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => deleteKey(idx)} className="text-red-500 hover:text-red-400 ml-1"><Trash2 className="w-4 h-4" /></button>
-                      </div>
-                    ))}
+                    {formData.api_keys.map((keyObj, idx) => {
+                      const providerName = formData.provider;
+                      const rtDisabled = runtimeKeyStatus[providerName]?.auto_disabled || [];
+                      const rtEntry = !keyObj.disabled ? rtDisabled.find((d: any) => d.key === keyObj.key) : null;
+                      const isRtDisabled = !!rtEntry;
+                      const isPermanent = isRtDisabled && rtEntry.remaining_seconds < 0;
+                      const isCooling = isRtDisabled && !isPermanent && rtEntry.remaining_seconds > 0;
+                      const countdown = localCountdowns[providerName]?.[keyObj.key];
+                      const remainSec = countdown?.remaining ?? (rtEntry?.remaining_seconds || 0);
+                      const totalDuration = countdown?.duration ?? (rtEntry?.duration || 0);
+
+                      // 永久自动禁用和配置禁用都用同样的变灰样式
+                      const isGrayed = keyObj.disabled || isPermanent;
+
+                      if (isCooling) {
+                        return (
+                          <CoolingKeyRow
+                            key={idx}
+                            idx={idx}
+                            keyObj={keyObj}
+                            remainSec={remainSec}
+                            totalDuration={totalDuration}
+                            onRecover={async () => { await apiFetch('/v1/channels/key_status/re_enable', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ provider: providerName, key: keyObj.key }) }); refreshKeyStatus(); }}
+                            onToggle={() => toggleKeyDisabled(idx)}
+                            onTest={() => openKeyTestDialog(idx)}
+                            onDelete={() => deleteKey(idx)}
+                          />
+                        );
+                      }
+
+                      return (
+                        <div key={idx} className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${isGrayed ? 'bg-muted/30 border-border opacity-50' : 'bg-muted/50 border-border'}`}>
+                          <span className="text-xs text-muted-foreground w-4 text-right">{idx + 1}</span>
+                          <input
+                            type="text"
+                            value={keyObj.key}
+                            onChange={e => updateKey(idx, e.target.value)}
+                            onPaste={e => handleKeyPaste(e, idx)}
+                            placeholder="sk-..."
+                            className={`flex-1 bg-transparent border-none text-sm font-mono outline-none min-w-0 ${isGrayed ? 'text-muted-foreground line-through' : 'text-foreground'}`}
+                          />
+                          {isPermanent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400 flex-shrink-0">永久禁用</span>}
+                          {isPermanent && (
+                            <button onClick={async () => { await apiFetch('/v1/channels/key_status/re_enable', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ provider: providerName, key: keyObj.key }) }); refreshKeyStatus(); }} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 cursor-pointer flex-shrink-0">恢复</button>
+                          )}
+                          <button onClick={() => toggleKeyDisabled(idx)} className={isGrayed ? 'text-muted-foreground' : 'text-emerald-500'} title={keyObj.disabled ? "启用" : "禁用"}>
+                            {keyObj.disabled ? <ToggleLeft className="w-5 h-5" /> : <ToggleRight className="w-5 h-5" />}
+                          </button>
+                          <button onClick={() => openKeyTestDialog(idx)} disabled={!keyObj.key.trim()} className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed" title="测试此 Key">
+                            <Play className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => deleteKey(idx)} className="text-red-500 hover:text-red-400 ml-1"><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                      );
+                    })}
                     {formData.api_keys.length === 0 && <div className="text-center p-4 text-sm text-muted-foreground italic">暂无密钥</div>}
                   </div>
                 </section>
@@ -1152,6 +1368,74 @@ export default function Channels() {
                         className="w-full bg-background border border-border px-3 py-2 rounded-lg text-sm font-mono focus:border-primary outline-none text-foreground"
                       />
                       <p className="text-xs text-muted-foreground mt-1">将上游非标准状态码映射为标准码以触发正确的重试策略。例如 529→429 使其按限流退避处理。</p>
+                    </div>
+                    {/* 自动禁用配置 */}
+                    <div className="col-span-1 sm:col-span-2 border-t border-border pt-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                          <Power className="w-3.5 h-3.5 text-red-500" /> Key 自动禁用
+                        </label>
+                        <Switch.Root
+                          checked={!!formData.preferences.auto_disable_key}
+                          onCheckedChange={val => {
+                            if (val) {
+                              updatePreference('auto_disable_key', { status_codes: [401, 403], keywords: [], duration: 0 });
+                            } else {
+                              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                              const { auto_disable_key: _, ...rest } = formData.preferences;
+                              updateFormData('preferences', rest);
+                            }
+                          }}
+                          className="w-9 h-5 bg-muted rounded-full relative data-[state=checked]:bg-red-500 transition-colors"
+                        >
+                          <Switch.Thumb className="block w-4 h-4 bg-white rounded-full shadow-md transition-transform translate-x-0.5 data-[state=checked]:translate-x-[18px]" />
+                        </Switch.Root>
+                      </div>
+                      <p className="text-xs text-muted-foreground mb-3">当 Key 请求返回指定错误码或响应包含指定关键词时，自动将其禁用一段时间或永久禁用。运行时状态不持久化，重启后重置。</p>
+                      {formData.preferences.auto_disable_key && (
+                        <div className="space-y-3 pl-1">
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground mb-1 block">触发状态码</label>
+                            <input
+                              type="text"
+                              value={(formData.preferences.auto_disable_key.status_codes || []).join(', ')}
+                              onChange={e => {
+                                const codes = e.target.value.split(/[,，\s]+/).map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+                                updatePreference('auto_disable_key', { ...formData.preferences.auto_disable_key, status_codes: codes });
+                              }}
+                              placeholder="401, 403"
+                              className="w-full bg-background border border-border px-3 py-1.5 rounded-lg text-xs font-mono focus:border-primary outline-none text-foreground"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground mb-1 block">触发关键词（响应体包含，逗号分隔）</label>
+                            <input
+                              type="text"
+                              value={(formData.preferences.auto_disable_key.keywords || []).join(', ')}
+                              onChange={e => {
+                                const kws = e.target.value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+                                updatePreference('auto_disable_key', { ...formData.preferences.auto_disable_key, keywords: kws });
+                              }}
+                              placeholder="insufficient_quota, billing"
+                              className="w-full bg-background border border-border px-3 py-1.5 rounded-lg text-xs font-mono focus:border-primary outline-none text-foreground"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground mb-1 block">禁用时长（秒，0 = 永久）</label>
+                            <input
+                              type="number"
+                              value={formData.preferences.auto_disable_key.duration ?? 0}
+                              onChange={e => {
+                                updatePreference('auto_disable_key', { ...formData.preferences.auto_disable_key, duration: Math.max(0, parseInt(e.target.value) || 0) });
+                              }}
+                              min={0}
+                              placeholder="0"
+                              className="w-full bg-background border border-border px-3 py-1.5 rounded-lg text-xs font-mono focus:border-primary outline-none text-foreground"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">设为 0 表示永久禁用（需手动恢复）。设为正数则为冷却秒数，到期后自动恢复。</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </section>

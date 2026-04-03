@@ -371,6 +371,15 @@ async def update_config(config_data, use_config_url=False, skip_model_fetch=Fals
                         items.append(key_str)
                 return items, disabled_keys
             
+            # 保存旧实例的自动禁用状态，用于热重载后恢复
+            old_circular = provider_api_circular_list.get(provider['provider'])
+            old_auto_disabled = {}
+            old_auto_cooling = {}
+            # 注意: 此处直接读旧实例的共享状态未加锁，但热重载窗口极短且为只读快照，风险可接受
+            if old_circular and hasattr(old_circular, 'auto_disabled_info'):
+                old_auto_disabled = dict(old_circular.auto_disabled_info)
+                old_auto_cooling = {k: old_circular.cooling_until[k] for k in old_auto_disabled}
+
             if isinstance(provider_api, str):
                 items, disabled_keys = parse_api_keys([provider_api])
                 provider_api_circular_list[provider['provider']] = ThreadSafeCircularList(
@@ -389,6 +398,19 @@ async def update_config(config_data, use_config_url=False, skip_model_fetch=Fals
                     provider_name=provider['provider'],
                     disabled_keys=disabled_keys
                 )
+
+            # 恢复自动禁用状态（仅恢复新实例中仍存在的 Key）
+            if old_auto_disabled:
+                new_circular = provider_api_circular_list.get(provider['provider'])
+                if new_circular:
+                    from time import time as _time_now
+                    now = _time_now()
+                    for k, info in old_auto_disabled.items():
+                        until = old_auto_cooling.get(k, 0)
+                        if k in new_circular.items and k not in new_circular.disabled_keys:
+                            if until == float('inf') or until > now:
+                                new_circular.cooling_until[k] = until
+                                new_circular.auto_disabled_info[k] = info
 
         if "models.inference.ai.azure.com" in provider['base_url'] and not provider.get("model"):
             provider['model'] = [

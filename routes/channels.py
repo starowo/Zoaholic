@@ -35,6 +35,51 @@ async def get_channels(token: str = Depends(verify_admin_api_key)):
     return JSONResponse(content={"channels": channel_list})
 
 
+@router.get("/v1/channels/key_status", dependencies=[Depends(rate_limit_dependency)])
+async def get_key_status(token: str = Depends(verify_admin_api_key)):
+    """获取所有渠道的运行时 Key 自动禁用状态。仅反映内存中的实时状态，不修改任何配置。"""
+    from core.utils import provider_api_circular_list
+    from time import time as _time
+
+    now = _time()
+    result = {}
+    for provider_name, circular_list in provider_api_circular_list.items():
+        auto_disabled = await circular_list.get_auto_disabled_keys()
+        cooling = []
+        for item in circular_list.items:
+            # 只返回普通冷却中（非自动禁用）的 Key
+            if item not in circular_list.auto_disabled_info and now < circular_list.cooling_until.get(item, 0):
+                remaining = int(circular_list.cooling_until[item] - now)
+                cooling.append({"key": item, "remaining_seconds": remaining})
+        if auto_disabled or cooling:
+            result[provider_name] = {
+                "auto_disabled": auto_disabled,
+                "cooling": cooling,
+            }
+    return JSONResponse(content=result)
+
+
+@router.post("/v1/channels/key_status/re_enable", dependencies=[Depends(rate_limit_dependency)])
+async def re_enable_key(token: str = Depends(verify_admin_api_key), body: dict = Body(...)):
+    """手动恢复被运行时自动禁用的 Key。
+
+    请求体: { "provider": "渠道名", "key": "api_key_string" }
+    """
+    from core.utils import provider_api_circular_list
+
+    provider_name = body.get("provider")
+    key = body.get("key")
+    if not provider_name or not key:
+        return JSONResponse(status_code=400, content={"error": "Missing provider or key"})
+
+    circular_list = provider_api_circular_list.get(provider_name)
+    if not circular_list:
+        return JSONResponse(status_code=404, content={"error": f"Provider '{provider_name}' not found"})
+
+    await circular_list.clear_auto_disabled(key)
+    return JSONResponse(content={"status": "re_enabled", "provider": provider_name})
+
+
 @router.post("/v1/channels/fetch_models", dependencies=[Depends(rate_limit_dependency)])
 async def fetch_channel_models(
     token: str = Depends(verify_admin_api_key),

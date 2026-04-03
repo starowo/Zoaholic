@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import { apiFetch } from '../lib/api';
 import { 
   Puzzle, 
   Settings2, 
@@ -14,8 +15,8 @@ interface PluginOption {
   version: string;
   description: string;
   enabled: boolean;
-  request_interceptors: any[];
-  response_interceptors: any[];
+  request_interceptors: unknown[];
+  response_interceptors: unknown[];
   metadata?: {
     params_hint?: string;
     provider_config?: {
@@ -23,7 +24,7 @@ interface PluginOption {
       type?: 'json' | 'text';
       title?: string;
       description?: string;
-      example?: any;
+      example?: unknown;
     };
   };
 }
@@ -33,11 +34,17 @@ interface InterceptorSheetProps {
   onOpenChange: (open: boolean) => void;
   allPlugins: PluginOption[];
   enabledPlugins: string[]; // ["pluginA:config", "pluginB"]
-  providerPreferences: Record<string, any>;
-  onUpdate: (payload: { enabled_plugins: string[]; preferences_patch: Record<string, any>; preferences_delete: string[] }) => void;
+  providerPreferences: Record<string, unknown>;
+  onUpdate: (payload: { enabled_plugins: string[]; preferences_patch: Record<string, unknown>; preferences_delete: string[] }) => void;
 }
 
 export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugins, providerPreferences, onUpdate }: InterceptorSheetProps) {
+  // 自行获取插件列表，防止父组件传入的 allPlugins 因 403 等原因为空
+  const [localPlugins, setLocalPlugins] = useState<PluginOption[]>(allPlugins);
+
+  // 优先使用自行获取的 localPlugins，回退到父组件传入的 allPlugins
+  const effectivePlugins = localPlugins.length > 0 ? localPlugins : allPlugins;
+
   // Parsing helpers
   const parseEntry = (entry: string) => {
     // 约定：enabled_plugins 的单条配置使用“第一个冒号”分隔 name 与 options。
@@ -58,17 +65,33 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
   // Re-init when opening (important: same sheet instance is reused across different providers)
   useEffect(() => {
     if (!open) return;
+    // 每次打开时刷新插件列表，避免首次 403 导致列表永远为空
+    const refreshPlugins = async () => {
+      try {
+        const res = await apiFetch('/v1/plugins/interceptors');
+        if (res.ok) {
+          const data = await res.json();
+          const plugins = data.interceptor_plugins || [];
+          if (plugins.length > 0) setLocalPlugins(plugins);
+        }
+      } catch { /* ignore */ }
+    };
+    refreshPlugins();
+  }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
     const m = new Map<string, string>();
     enabledPlugins.forEach(entry => {
       const { name, options } = parseEntry(entry);
       if (name) m.set(name, options);
     });
-    setSelected(m);
-    setExpanded(new Set());
+    // 打开面板时重置本地状态，这是组件初始化的标准做法
+    // eslint-disable-next-line
+    setSelected(m); setExpanded(new Set());
 
     const cfgMap = new Map<string, string>();
-    allPlugins.forEach(p => {
+    effectivePlugins.forEach(p => {
       const meta = p.metadata?.provider_config;
       if (!meta?.key) return;
 
@@ -84,7 +107,7 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
       }
     });
     setProviderConfigText(cfgMap);
-  }, [open, enabledPlugins, allPlugins, providerPreferences]);
+  }, [open, enabledPlugins, effectivePlugins, providerPreferences]);
 
   // Handlers
   const toggleSelect = (pluginName: string) => {
@@ -115,7 +138,7 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
 
   const selectAll = () => {
     const next = new Map(selected);
-    allPlugins.forEach(p => {
+    effectivePlugins.forEach(p => {
       if (!next.has(p.plugin_name)) next.set(p.plugin_name, '');
     });
     setSelected(next);
@@ -145,10 +168,10 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
       result.push(options ? `${name}:${options}` : name);
     });
 
-    const preferences_patch: Record<string, any> = {};
+    const preferences_patch: Record<string, unknown> = {};
     const preferences_delete: string[] = [];
 
-    for (const plugin of allPlugins) {
+    for (const plugin of effectivePlugins) {
       const meta = plugin.metadata?.provider_config;
       if (!meta?.key) continue;
 
@@ -165,8 +188,8 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
       if (configType === 'json') {
         try {
           preferences_patch[meta.key] = JSON.parse(t);
-        } catch (e: any) {
-          alert(`插件 ${plugin.plugin_name} 配置 JSON 格式错误：${e?.message || 'invalid json'}`);
+        } catch (e) {
+          alert(`插件 ${plugin.plugin_name} 配置 JSON 格式错误：${e instanceof Error ? e.message : 'invalid json'}`);
           return;
         }
       } else {
@@ -202,7 +225,7 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
             {/* Toolbar */}
             <div className="flex items-center justify-between p-3 bg-muted/40 border border-border rounded-lg">
               <span className="text-sm text-muted-foreground">
-                共 {allPlugins.length} 个插件，已选 <span className="text-foreground font-medium">{selected.size}</span> 个
+                共 {effectivePlugins.length} 个插件，已选 <span className="text-foreground font-medium">{selected.size}</span> 个
               </span>
               <div className="flex gap-2">
                 <button onClick={selectAll} className="text-xs font-medium text-emerald-500 hover:text-emerald-400 px-2 py-1 bg-emerald-500/10 rounded">全选</button>
@@ -212,7 +235,7 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
 
             {/* Plugin List (Accordion) */}
             <div className="space-y-2.5">
-              {allPlugins.map(plugin => {
+              {effectivePlugins.map(plugin => {
                 const isSelected = selected.has(plugin.plugin_name);
                 const isExpanded = expanded.has(plugin.plugin_name);
                 const options = selected.get(plugin.plugin_name) || '';
@@ -287,8 +310,8 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
                                 onClick={() => {
                                   try {
                                     updateProviderConfigText(plugin.plugin_name, formatJsonText(providerConfigText.get(plugin.plugin_name) || ''));
-                                  } catch (e: any) {
-                                    alert(`格式化失败：${e?.message || 'invalid json'}`);
+                                  } catch (e: unknown) {
+                                    alert(`格式化失败：${e instanceof Error ? e.message : 'invalid json'}`);
                                   }
                                 }}
                                 className="text-xs font-medium text-muted-foreground hover:text-foreground px-2 py-1 bg-muted rounded disabled:opacity-50"
@@ -296,7 +319,7 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
                                 格式化
                               </button>
 
-                              {plugin.metadata?.provider_config?.example && (
+                              {plugin.metadata?.provider_config?.example != null && (
                                 <button
                                   type="button"
                                   disabled={!isSelected}

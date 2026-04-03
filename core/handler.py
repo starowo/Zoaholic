@@ -1133,6 +1133,25 @@ class ModelRequestHandler:
                     and all(error not in error_message for error in exclude_error_rate_limit)):
                     await provider_api_circular_list[channel_id].set_cooling(current_api, cooling_time=cooling_time)
 
+                # ── Key 自动禁用 ──
+                # 根据渠道配置的 auto_disable_key，当 Key 遇到特定错误码或错误信息包含关键词时自动禁用
+                auto_disable_cfg = safe_get(provider, "preferences", "auto_disable_key", default=None)
+                if auto_disable_cfg and isinstance(auto_disable_cfg, dict):
+                    trigger_codes = auto_disable_cfg.get("status_codes", [401, 403])
+                    if not isinstance(trigger_codes, list):
+                        trigger_codes = [trigger_codes]
+                    trigger_codes_set = set(int(c) for c in trigger_codes if str(c).isdigit())
+                    keywords = [k.strip() for k in (auto_disable_cfg.get("keywords") or []) if isinstance(k, str) and k.strip()]
+                    re_enable_seconds = int(auto_disable_cfg.get("duration", 0))
+
+                    error_lower = (error_message or "").lower()
+                    code_matched = status_code in trigger_codes_set
+                    keyword_matched = any(kw.lower() in error_lower for kw in keywords) if keywords else False
+
+                    if (code_matched or keyword_matched) and current_api:
+                        reason = f"status={status_code}" if code_matched else "keyword_match"
+                        await provider_api_circular_list[channel_id].set_auto_disabled(current_api, duration=re_enable_seconds, reason=reason)
+
                 # 有些错误并没有请求成功，所以需要删除请求记录
                 if (current_api 
                     and any(error in error_message for error in exclude_error_rate_limit) 

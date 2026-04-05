@@ -283,7 +283,11 @@ async def get_claude_payload(request, engine, provider, api_key=None):
                     content_list.extend(messages[message_index + 1]["content"])
                     messages[message_index]["content"] = content_list
                 else:
-                    messages[message_index]["content"] += messages[message_index + 1]["content"]
+                    next_content = messages[message_index + 1]["content"]
+                    if isinstance(messages[message_index]["content"], str) and isinstance(next_content, str):
+                        messages[message_index]["content"] += "\n" + next_content
+                    else:
+                        messages[message_index]["content"] += next_content
             messages.pop(message_index + 1)
             conversation_len = conversation_len - 1
         else:
@@ -343,22 +347,27 @@ async def get_claude_payload(request, engine, provider, api_key=None):
                 json_tool = await gpt2claude_tools_json(tool_dict)
                 tools.append(json_tool)
         payload["tools"] = tools
-        if "tool_choice" in payload:
-            if isinstance(payload["tool_choice"], dict):
-                if payload["tool_choice"]["type"] == "function":
+
+        # tool_choice 转换：从 request 对象读取，而非从 payload 读取
+        # （tool_choice 在 miss_fields 中被排除，不会自动进入 payload）
+        raw_tool_choice = request.tool_choice
+        if raw_tool_choice is not None:
+            if isinstance(raw_tool_choice, dict) or (hasattr(raw_tool_choice, 'type') and hasattr(raw_tool_choice, 'function')):
+                tc_dict = raw_tool_choice if isinstance(raw_tool_choice, dict) else raw_tool_choice.model_dump(exclude_none=True)
+                if tc_dict.get("type") == "function" and tc_dict.get("function", {}).get("name"):
                     payload["tool_choice"] = {
                         "type": "tool",
-                        "name": payload["tool_choice"]["function"]["name"]
+                        "name": tc_dict["function"]["name"]
                     }
-            if isinstance(payload["tool_choice"], str):
-                if payload["tool_choice"] == "auto":
-                    payload["tool_choice"] = {
-                        "type": "auto"
-                    }
-                if payload["tool_choice"] == "none":
-                    payload["tool_choice"] = {
-                        "type": "any"
-                    }
+                else:
+                    payload["tool_choice"] = tc_dict
+            elif isinstance(raw_tool_choice, str):
+                if raw_tool_choice == "auto":
+                    payload["tool_choice"] = {"type": "auto"}
+                elif raw_tool_choice == "none":
+                    payload["tool_choice"] = {"type": "any"}
+                elif raw_tool_choice == "required":
+                    payload["tool_choice"] = {"type": "any"}
 
     if tools_mode == "none":
         payload.pop("tools", None)

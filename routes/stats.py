@@ -558,7 +558,7 @@ async def get_usage_analysis(
     model: Optional[str] = Query(default=None, description="Model filter, comma-separated for multiple"),
 ):
     """
-    按渠道和模型分组的用量分析，返回请求次数和 Token 消耗量，用于费用模拟。
+    按渠道和模型分组的用量分析，返回请求次数、Token 消耗量和基于当前配置价格的实时费用。
     """
     if DISABLE_DATABASE:
         return JSONResponse(content={"data": []})
@@ -684,6 +684,18 @@ async def get_usage_analysis(
                 for row in result.fetchall()
             ]
 
+    # 用当前配置价格实时计算每行费用（渠道级 > 全局级 > 0）
+    from core.stats import get_current_model_prices
+    app = get_app()
+    for entry in data:
+        prompt_price, completion_price = get_current_model_prices(
+            app, entry["model"], provider_name=entry["provider"]
+        )
+        entry["total_cost"] = (
+            entry["total_prompt_tokens"] * prompt_price
+            + entry["total_completion_tokens"] * completion_price
+        ) / 1_000_000
+
     return JSONResponse(content={
         "data": data,
         "start_datetime": start_detail,
@@ -691,6 +703,7 @@ async def get_usage_analysis(
         "provider_filter": provider or "all",
         "model_filter": model or "all",
     })
+
 
 
 @router.get("/v1/stats/model_trend", dependencies=[Depends(rate_limit_dependency)])

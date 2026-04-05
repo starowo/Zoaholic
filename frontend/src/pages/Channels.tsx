@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useState, useRef, KeyboardEvent, ClipboardEvent } from 'react';
+import { useEffect, useState, KeyboardEvent, ClipboardEvent } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { apiFetch } from '../lib/api';
 import {
   Plus, Edit, Brain, Trash2, ArrowRight, RefreshCw,
   Server, X, CheckCircle2, Settings2, Copy, ToggleRight, ToggleLeft,
   Folder, Puzzle, Network, CopyCheck, Power, Files, Play,
-  Search, Check, BarChart3
+  Search, Check, BarChart3, Wallet
 } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Switch from '@radix-ui/react-switch';
@@ -72,6 +72,52 @@ const SCHEDULE_ALGORITHMS = [
   { value: 'smart_round_robin', label: '智能轮询 (Smart)' },
 ];
 
+// ── 余额类型 ──
+interface BalanceResult {
+  supported: boolean;
+  value_type?: 'amount' | 'percent';
+  total?: number | null;
+  used?: number | null;
+  available?: number | null;
+  percent?: number | null;
+  raw?: any;
+  error?: string | null;
+}
+
+function getBalancePercent(b: BalanceResult): number | null {
+  if (!b.supported || b.error) return null;
+  if (b.value_type === 'percent' && b.percent != null) return b.percent;
+  if (b.total != null && b.total > 0 && b.available != null) return (b.available / b.total) * 100;
+  return null;
+}
+
+function getBalanceColor(pct: number | null): 'green' | 'yellow' | 'red' | null {
+  if (pct == null) return null;
+  if (pct >= 50) return 'green';
+  if (pct >= 20) return 'yellow';
+  return 'red';
+}
+
+function getBalanceLabel(b: BalanceResult): string | null {
+  if (!b.supported || b.error) return null;
+  if (b.value_type === 'percent' && b.percent != null) return `${b.percent.toFixed(1)}%`;
+  if (b.available != null && b.total != null) return `${b.available.toFixed(1)} / ${b.total.toFixed(1)}`;
+  if (b.available != null) return `${b.available.toFixed(1)}`;
+  return null;
+}
+
+const BALANCE_FILL_COLORS = {
+  green: 'linear-gradient(90deg, rgba(16,185,129,0.15) 0%, rgba(16,185,129,0.04) 100%)',
+  yellow: 'linear-gradient(90deg, rgba(234,179,8,0.18) 0%, rgba(234,179,8,0.04) 100%)',
+  red: 'linear-gradient(90deg, rgba(239,68,68,0.18) 0%, rgba(239,68,68,0.04) 100%)',
+};
+
+const TAG_CLASSES = {
+  green: 'text-emerald-400 bg-emerald-500/12',
+  yellow: 'text-yellow-400 bg-yellow-500/12',
+  red: 'text-red-400 bg-red-500/12',
+};
+
 // ── 格式化倒计时 ──
 function formatCountdown(seconds: number) {
   if (seconds <= 0) return '即将恢复';
@@ -83,71 +129,32 @@ function formatCountdown(seconds: number) {
   return `${s}s`;
 }
 
-// ── SVG 边框进度组件（文件顶层，避免每次渲染重建） ──
-function CoolingBorderSvg({ wrapperRef, progress }: { wrapperRef: React.RefObject<HTMLDivElement | null>; progress: number }) {
-  const [d, setD] = useState('');
-  const [size, setSize] = useState({ w: 0, h: 0 });
-  useEffect(() => {
-    const el = wrapperRef.current;
-    if (!el) return;
-    const w = el.offsetWidth, h = el.offsetHeight, r = 7, inset = 1;
-    const rw = w - 2 * inset, rh = h - 2 * inset, x = inset, y = inset;
-    setSize({ w, h });
-    setD([
-      `M ${x + r} ${y}`,
-      `L ${x + rw - r} ${y}`,
-      `A ${r} ${r} 0 0 1 ${x + rw} ${y + r}`,
-      `L ${x + rw} ${y + rh - r}`,
-      `A ${r} ${r} 0 0 1 ${x + rw - r} ${y + rh}`,
-      `L ${x + r} ${y + rh}`,
-      `A ${r} ${r} 0 0 1 ${x} ${y + rh - r}`,
-      `L ${x} ${y + r}`,
-      `A ${r} ${r} 0 0 1 ${x + r} ${y}`,
-      'Z'
-    ].join(' '));
-  }, [wrapperRef]);
-  if (!d) return null;
-  const pct = Math.max(0, Math.min(100, progress));
-  return (
-    <svg
-      className="absolute top-0 left-0 w-full h-full pointer-events-none z-[1]"
-      viewBox={`0 0 ${size.w} ${size.h}`}
-      preserveAspectRatio="none"
-    >
-      <path
-        d={d}
-        fill="none"
-        stroke="#ef4444"
-        strokeWidth={2}
-        strokeLinecap="round"
-        pathLength={100}
-        strokeDasharray={`${pct} 100`}
-        strokeDashoffset={`${-(100 - pct)}`}
-      />
-    </svg>
-  );
-}
-
-// ── 冷却中 Key 行组件（文件顶层，安全使用 useRef） ──
-function CoolingKeyRow({ idx, keyObj, remainSec, totalDuration, onRecover, onToggle, onTest, onDelete }: {
-  idx: number; keyObj: { key: string; disabled: boolean };
-  remainSec: number; totalDuration: number;
+// ── 冷却中 Key 行组件 ──
+function CoolingKeyRow({ idx, keyObj, remainSec, focused, onFocus, onBlur, onRecover, onToggle, onTest, onDelete }: {
+  idx: number; keyObj: { key: string; disabled: boolean }; remainSec: number;
+  focused: boolean;
+  onFocus: () => void; onBlur: () => void;
   onRecover: () => void; onToggle: () => void; onTest: () => void; onDelete: () => void;
 }) {
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const progressPct = totalDuration > 0 ? Math.max(0, Math.min(100, (remainSec / totalDuration) * 100)) : 0;
   return (
-    <div ref={wrapperRef} className="relative rounded-lg">
-      <CoolingBorderSvg wrapperRef={wrapperRef} progress={progressPct} />
-      <div className="flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-zinc-800 bg-zinc-900 relative">
-        <span className="text-xs text-muted-foreground w-4 text-right">{idx + 1}</span>
-        <span className="flex-1 text-sm font-mono min-w-0 truncate text-red-300 line-through decoration-red-500/40 relative">
-          {keyObj.key || 'sk-...'}
-          <span className="absolute inset-0 flex items-center justify-center">
-            <span className="text-[11px] font-semibold text-red-400 bg-zinc-900/85 rounded px-2 py-0.5">{formatCountdown(remainSec)}</span>
+    <div className={`relative flex items-center gap-2 px-3 py-2 rounded-lg border overflow-hidden transition-colors ${focused ? 'border-blue-500 bg-muted/50' : 'border-red-900/60 bg-zinc-900'}`}>
+      <span className="text-xs text-muted-foreground w-4 text-right relative z-[2]">{idx + 1}</span>
+      <div className="flex-1 min-w-0 relative z-[2]" style={!focused ? { WebkitMaskImage: 'linear-gradient(to right, black 0%, black 60%, transparent 100%)', maskImage: 'linear-gradient(to right, black 0%, black 60%, transparent 100%)' } : undefined}>
+        <input
+          type="text" value={keyObj.key || ''} readOnly placeholder="sk-..."
+          onFocus={onFocus} onBlur={onBlur}
+          className={`w-full bg-transparent border-none text-sm font-mono outline-none ${focused ? 'text-foreground' : 'text-red-300 line-through decoration-red-500/40'}`}
+        />
+      </div>
+      {!focused && (
+        <>
+          <span className="flex-shrink-0 text-[10px] font-semibold font-mono px-1.5 py-0.5 rounded text-red-400 bg-red-500/10 relative z-[2]">
+            {formatCountdown(remainSec)}
           </span>
-        </span>
-        <button onClick={onRecover} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 cursor-pointer flex-shrink-0">恢复</button>
+          <button onClick={onRecover} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 cursor-pointer flex-shrink-0 relative z-[2]">恢复</button>
+        </>
+      )}
+      <div className="actions flex items-center gap-1 flex-shrink-0 relative z-[2]">
         <button onClick={onToggle} className="text-muted-foreground" title="禁用"><ToggleRight className="w-5 h-5" /></button>
         <button onClick={onTest} disabled={!keyObj.key.trim()} className="text-blue-600 dark:text-blue-400 disabled:opacity-50"><Play className="w-4 h-4" /></button>
         <button onClick={onDelete} className="text-red-500 hover:text-red-400 ml-1"><Trash2 className="w-4 h-4" /></button>
@@ -182,6 +189,11 @@ export default function Channels() {
   const [modelDisplayKey, setModelDisplayKey] = useState(0);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analyticsProvider, setAnalyticsProvider] = useState('');
+
+  // ── 余额查询 ──
+  const [balanceResults, setBalanceResults] = useState<Record<string, BalanceResult>>({});
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [focusedKeyIdx, setFocusedKeyIdx] = useState<number | null>(null);
 
   const [isFetchModelsOpen, setIsFetchModelsOpen] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
@@ -296,12 +308,24 @@ export default function Channels() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── 打开编辑面板时自动查询余额 ──
+  useEffect(() => {
+    if (isModalOpen && formData?.preferences?.balance && formData.base_url && formData.api_keys.some(k => k.key.trim() && !k.disabled)) {
+      queryAllBalances(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isModalOpen]);
+
   const openModal = (provider: any = null, index: number | null = null) => {
     setOriginalIndex(index);
     setGroupInput('');
     setModelInput('');
     setShowPluginSheet(false);
     refreshKeyStatus();
+
+    setBalanceResults({});
+    setBalanceLoading(false);
+    setFocusedKeyIdx(null);
 
     if (provider) {
       const parseApiKey = (keyStr: string) => {
@@ -402,6 +426,47 @@ export default function Channels() {
 
   const updatePreference = (field: keyof ProviderFormData['preferences'], value: any) => {
     setFormData(prev => prev ? { ...prev, preferences: { ...prev.preferences, [field]: value } } : null);
+  };
+
+  // ── 查询所有 Key 余额 ──
+  const queryAllBalances = async (silent = false) => {
+    if (!formData || !formData.base_url) return;
+    const balanceCfg = formData.preferences?.balance;
+    if (!balanceCfg) { if (!silent) alert('该渠道未配置余额查询（preferences.balance）'); return; }
+
+    const activeKeys = formData.api_keys.filter(k => k.key.trim() && !k.disabled);
+    if (activeKeys.length === 0) { if (!silent) alert('没有可用的 Key'); return; }
+
+    setBalanceLoading(true);
+    const results: Record<string, BalanceResult> = {};
+
+    // 并发查询（最多 5 个并发）
+    const concurrency = 5;
+    const queue = [...activeKeys];
+    const runNext = async () => {
+      while (queue.length > 0) {
+        const keyObj = queue.shift()!;
+        try {
+          const res = await apiFetch('/v1/channels/balance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              engine: formData.engine,
+              base_url: formData.base_url,
+              api_key: keyObj.key,
+              preferences: formData.preferences,
+            }),
+          });
+          const data = await res.json().catch(() => ({ supported: false, error: '响应解析失败' }));
+          results[keyObj.key] = data;
+        } catch (e: any) {
+          results[keyObj.key] = { supported: false, error: e.message || '网络错误' };
+        }
+        setBalanceResults({ ...results });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, activeKeys.length) }, () => runNext()));
+    setBalanceLoading(false);
   };
 
   const addEmptyKey = () => {
@@ -1193,6 +1258,14 @@ export default function Channels() {
                     <div className="flex items-center gap-2 text-xs">
                       <button onClick={copyAllKeys} className="text-muted-foreground hover:text-foreground flex items-center gap-1"><Copy className="w-3 h-3" /> 复制全部</button>
                       <button
+                        onClick={() => queryAllBalances()}
+                        disabled={balanceLoading || !formData.preferences?.balance}
+                        className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={formData.preferences?.balance ? '查询所有 Key 的余额' : '未配置余额查询（在高级设置中配置 preferences.balance）'}
+                      >
+                        <Wallet className={`w-3 h-3 ${balanceLoading ? 'animate-pulse' : ''}`} /> {balanceLoading ? '查询中...' : '余额'}
+                      </button>
+                      <button
                         onClick={() => openKeyTestDialog(null)}
                         disabled={formData.api_keys.length === 0}
                         className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1215,16 +1288,18 @@ export default function Channels() {
                     {formData.api_keys.map((keyObj, idx) => {
                       const providerName = formData.provider;
                       const rtDisabled = runtimeKeyStatus[providerName]?.auto_disabled || [];
-                      const rtEntry = !keyObj.disabled ? rtDisabled.find((d: any) => d.key === keyObj.key) : null;
+                      const rtEntry = !keyObj.disabled ? rtDisabled.find((d: any) => d.key === keyObj.key) : undefined;
                       const isRtDisabled = !!rtEntry;
                       const isPermanent = isRtDisabled && rtEntry.remaining_seconds < 0;
                       const isCooling = isRtDisabled && !isPermanent && rtEntry.remaining_seconds > 0;
                       const countdown = localCountdowns[providerName]?.[keyObj.key];
                       const remainSec = countdown?.remaining ?? (rtEntry?.remaining_seconds || 0);
-                      const totalDuration = countdown?.duration ?? (rtEntry?.duration || 0);
 
                       // 永久自动禁用和配置禁用都用同样的变灰样式
                       const isGrayed = keyObj.disabled || isPermanent;
+
+                      const isFocused = focusedKeyIdx === idx;
+                      const bal = balanceResults[keyObj.key];
 
                       if (isCooling) {
                         return (
@@ -1233,7 +1308,9 @@ export default function Channels() {
                             idx={idx}
                             keyObj={keyObj}
                             remainSec={remainSec}
-                            totalDuration={totalDuration}
+                            focused={isFocused}
+                            onFocus={() => setFocusedKeyIdx(idx)}
+                            onBlur={() => setFocusedKeyIdx(null)}
                             onRecover={async () => { await apiFetch('/v1/channels/key_status/re_enable', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ provider: providerName, key: keyObj.key }) }); refreshKeyStatus(); }}
                             onToggle={() => toggleKeyDisabled(idx)}
                             onTest={() => openKeyTestDialog(idx)}
@@ -1242,28 +1319,45 @@ export default function Channels() {
                         );
                       }
 
+                      const balPct = bal ? getBalancePercent(bal) : null;
+                      const balColor = getBalanceColor(balPct);
+                      const balLabel = bal ? getBalanceLabel(bal) : null;
+                      const hasTag = !isGrayed && (!!balLabel || isPermanent);
+
                       return (
-                        <div key={idx} className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${isGrayed ? 'bg-muted/30 border-border opacity-50' : 'bg-muted/50 border-border'}`}>
-                          <span className="text-xs text-muted-foreground w-4 text-right">{idx + 1}</span>
-                          <input
-                            type="text"
-                            value={keyObj.key}
-                            onChange={e => updateKey(idx, e.target.value)}
-                            onPaste={e => handleKeyPaste(e, idx)}
-                            placeholder="sk-..."
-                            className={`flex-1 bg-transparent border-none text-sm font-mono outline-none min-w-0 ${isGrayed ? 'text-muted-foreground line-through' : 'text-foreground'}`}
-                          />
-                          {isPermanent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400 flex-shrink-0">永久禁用</span>}
-                          {isPermanent && (
-                            <button onClick={async () => { await apiFetch('/v1/channels/key_status/re_enable', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ provider: providerName, key: keyObj.key }) }); refreshKeyStatus(); }} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 cursor-pointer flex-shrink-0">恢复</button>
+                        <div key={idx} className={`relative flex items-center gap-2 px-3 py-2 rounded-lg border overflow-hidden transition-colors ${isFocused ? 'border-blue-500' : 'border-border'} ${isGrayed ? 'bg-muted/30 opacity-50' : 'bg-muted/50'}`}>
+                          {/* 余额进度条背景 */}
+                          {!isFocused && balColor && balPct != null && (
+                            <div className="absolute left-0 top-0 bottom-0 rounded-[7px] z-0 pointer-events-none transition-all duration-500"
+                                 style={{ width: `${Math.max(1, balPct)}%`, background: BALANCE_FILL_COLORS[balColor] }} />
                           )}
-                          <button onClick={() => toggleKeyDisabled(idx)} className={isGrayed ? 'text-muted-foreground' : 'text-emerald-500'} title={keyObj.disabled ? "启用" : "禁用"}>
+                          <span className="text-xs text-muted-foreground w-4 text-right relative z-[2]">{idx + 1}</span>
+                          <div className="flex-1 min-w-0 relative z-[2]" style={hasTag && !isFocused ? { WebkitMaskImage: 'linear-gradient(to right, black 0%, black 60%, transparent 100%)', maskImage: 'linear-gradient(to right, black 0%, black 60%, transparent 100%)' } : undefined}>
+                            <input
+                              type="text"
+                              value={keyObj.key}
+                              onChange={e => updateKey(idx, e.target.value)}
+                              onPaste={e => handleKeyPaste(e, idx)}
+                              onFocus={() => setFocusedKeyIdx(idx)}
+                              onBlur={() => setFocusedKeyIdx(null)}
+                              placeholder="sk-..."
+                              className={`w-full bg-transparent border-none text-sm font-mono outline-none min-w-0 ${isGrayed ? 'text-muted-foreground line-through' : 'text-foreground'}`}
+                            />
+                          </div>
+                          {!isFocused && balLabel && balColor && (
+                            <span className={`flex-shrink-0 text-[10px] font-semibold font-mono px-1.5 py-0.5 rounded relative z-[2] ${TAG_CLASSES[balColor]}`}>{balLabel}</span>
+                          )}
+                          {!isFocused && isPermanent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400 flex-shrink-0 relative z-[2]">永久禁用</span>}
+                          {!isFocused && isPermanent && (
+                            <button onClick={async () => { await apiFetch('/v1/channels/key_status/re_enable', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ provider: providerName, key: keyObj.key }) }); refreshKeyStatus(); }} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 cursor-pointer flex-shrink-0 relative z-[2]">恢复</button>
+                          )}
+                          <button onClick={() => toggleKeyDisabled(idx)} className={`relative z-[2] ${isGrayed ? 'text-muted-foreground' : 'text-emerald-500'}`} title={keyObj.disabled ? "启用" : "禁用"}>
                             {keyObj.disabled ? <ToggleLeft className="w-5 h-5" /> : <ToggleRight className="w-5 h-5" />}
                           </button>
-                          <button onClick={() => openKeyTestDialog(idx)} disabled={!keyObj.key.trim()} className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed" title="测试此 Key">
+                          <button onClick={() => openKeyTestDialog(idx)} disabled={!keyObj.key.trim()} className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed relative z-[2]" title="测试此 Key">
                             <Play className="w-4 h-4" />
                           </button>
-                          <button onClick={() => deleteKey(idx)} className="text-red-500 hover:text-red-400 ml-1"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => deleteKey(idx)} className="text-red-500 hover:text-red-400 ml-1 relative z-[2]"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       );
                     })}
@@ -1537,6 +1631,129 @@ export default function Channels() {
                         <Switch.Thumb className="block w-5 h-5 bg-white rounded-full transition-transform data-[state=checked]:translate-x-[22px]" />
                       </Switch.Root>
                     </div>
+
+                    {/* 余额查询配置 */}
+                    <div className="border-t border-border pt-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                          <Wallet className="w-3.5 h-3.5 text-emerald-500" /> 余额查询
+                        </label>
+                        <Switch.Root
+                          checked={!!formData.preferences.balance}
+                          onCheckedChange={val => {
+                            if (val) {
+                              updatePreference('balance', { template: 'new-api' });
+                            } else {
+                              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                              const { balance: _, ...rest } = formData.preferences;
+                              updateFormData('preferences', rest);
+                              setBalanceResults({});
+                            }
+                          }}
+                          className="w-9 h-5 bg-muted rounded-full relative data-[state=checked]:bg-emerald-500 transition-colors"
+                        >
+                          <Switch.Thumb className="block w-4 h-4 bg-white rounded-full shadow-md transition-transform translate-x-0.5 data-[state=checked]:translate-x-[18px]" />
+                        </Switch.Root>
+                      </div>
+                      <p className="text-xs text-muted-foreground mb-3">启用后可查询每个 Key 的余额。选择预置模板或手动配置接口地址和字段映射。</p>
+                      {formData.preferences.balance && (() => {
+                        const bal = formData.preferences.balance as Record<string, any>;
+                        const isCustom = !bal.template;
+                        return (
+                          <div className="space-y-3 pl-1">
+                            <div>
+                              <label className="text-xs font-medium text-muted-foreground mb-1 block">模式</label>
+                              <select
+                                value={bal.template || '_custom'}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  if (v === '_custom') {
+                                    updatePreference('balance', { endpoint: '', mapping: { total: '', used: '', available: '', value_type: "'amount'" } });
+                                  } else {
+                                    updatePreference('balance', { template: v });
+                                  }
+                                  setBalanceResults({});
+                                }}
+                                className="w-full bg-background border border-border px-3 py-1.5 rounded-lg text-xs focus:border-primary outline-none text-foreground"
+                              >
+                                <option value="new-api">new-api（/api/status）</option>
+                                <option value="openrouter">OpenRouter</option>
+                                <option value="_custom">自定义</option>
+                              </select>
+                            </div>
+                            {isCustom && (
+                              <>
+                                <div>
+                                  <label className="text-xs font-medium text-muted-foreground mb-1 block">接口地址 (endpoint)</label>
+                                  <input
+                                    type="text"
+                                    value={bal.endpoint || ''}
+                                    onChange={e => updatePreference('balance', { ...bal, endpoint: e.target.value })}
+                                    placeholder="/api/status 或 https://example.com/balance"
+                                    className="w-full bg-background border border-border px-3 py-1.5 rounded-lg text-xs font-mono focus:border-primary outline-none text-foreground"
+                                  />
+                                  <p className="text-xs text-muted-foreground mt-1">相对路径拼接到域名下，绝对 URL 直接使用</p>
+                                </div>
+                                <div>
+                                  <label className="text-xs font-medium text-muted-foreground mb-1 block">值类型</label>
+                                  <select
+                                    value={bal.mapping?.value_type === "'percent'" ? 'percent' : 'amount'}
+                                    onChange={e => {
+                                      const vt = e.target.value === 'percent' ? "'percent'" : "'amount'";
+                                      updatePreference('balance', { ...bal, mapping: { ...(bal.mapping || {}), value_type: vt } });
+                                    }}
+                                    className="w-full bg-background border border-border px-3 py-1.5 rounded-lg text-xs focus:border-primary outline-none text-foreground"
+                                  >
+                                    <option value="amount">数额（total / used / available）</option>
+                                    <option value="percent">百分比（percent）</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="text-xs font-medium text-muted-foreground mb-1 block">字段映射（dot notation）</label>
+                                  <div className="space-y-2">
+                                    {(bal.mapping?.value_type === "'percent'" ? [
+                                      { key: 'percent', label: 'percent', placeholder: 'data.remaining_percent' },
+                                    ] : [
+                                      { key: 'total', label: 'total', placeholder: 'data.totalQuota' },
+                                      { key: 'used', label: 'used', placeholder: 'data.usedQuota' },
+                                      { key: 'available', label: 'available', placeholder: 'data.remainQuota' },
+                                    ]).map(field => (
+                                      <div key={field.key} className="flex items-center gap-2">
+                                        <span className="text-[10px] text-muted-foreground w-16 flex-shrink-0 text-right font-mono">{field.label}</span>
+                                        <input
+                                          type="text"
+                                          value={bal.mapping?.[field.key] || ''}
+                                          onChange={e => updatePreference('balance', { ...bal, mapping: { ...(bal.mapping || {}), [field.key]: e.target.value } })}
+                                          placeholder={field.placeholder}
+                                          className="flex-1 bg-background border border-border px-2 py-1 rounded text-xs font-mono focus:border-primary outline-none text-foreground"
+                                        />
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-2">数额模式填 2 个即可，第 3 个自动算</p>
+                                </div>
+                                {bal.mapping?.value_type === "'percent'" && (
+                                  <div>
+                                    <label className="text-xs font-medium text-muted-foreground mb-1 block">百分比乘数</label>
+                                    <input
+                                      type="number"
+                                      value={bal.percent_multiplier ?? ''}
+                                      onChange={e => updatePreference('balance', { ...bal, percent_multiplier: e.target.value ? Number(e.target.value) : undefined })}
+                                      placeholder="1（接口返回 0~1 则填 100）"
+                                      className="w-full bg-background border border-border px-3 py-1.5 rounded-lg text-xs font-mono focus:border-primary outline-none text-foreground"
+                                    />
+                                  </div>
+                                )}
+                              </>
+                            )}
+                            {!isCustom && bal.template && (
+                              <p className="text-xs text-muted-foreground">使用 <code className="text-foreground">{bal.template}</code> 模板预设。如需微调切换为「自定义」。</p>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
                   </div>
                 </section>
 

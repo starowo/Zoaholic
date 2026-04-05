@@ -707,3 +707,103 @@ async def get_models_by_groups(
     all_models.sort(key=lambda x: x["id"])
     
     return JSONResponse(content={"models": all_models})
+
+
+@router.post("/v1/channels/balance", dependencies=[Depends(rate_limit_dependency)])
+async def query_channel_balance(
+    token: str = Depends(verify_admin_api_key),
+    provider_config: dict = Body(..., description="Provider configuration for balance query")
+):
+    """
+    查询渠道余额。
+
+    根据 provider 配置中的 preferences.balance 规则，
+    向上游余额接口发请求并返回标准化的余额信息。
+
+    请求体示例:
+    {
+        "engine": "openai",
+        "base_url": "https://example.com/v1",
+        "api_key": "sk-xxx",
+        "preferences": {
+            "balance": {
+                "template": "new-api"
+            }
+        }
+    }
+    """
+    from core.balance import query_provider_balance, build_balance_config
+
+    app = get_app()
+
+    engine = provider_config.get("engine") or provider_config.get("type") or "openai"
+
+    # 构建 provider 配置
+    provider = {
+        "base_url": provider_config.get("base_url", ""),
+        "api": provider_config.get("api_key") or provider_config.get("api") or "",
+        "engine": engine,
+        "preferences": provider_config.get("preferences", {}),
+        # Vertex AI
+        "project_id": provider_config.get("project_id", ""),
+        "client_email": provider_config.get("client_email", ""),
+        "private_key": provider_config.get("private_key", ""),
+        # AWS
+        "aws_access_key": provider_config.get("aws_access_key", ""),
+        "aws_secret_key": provider_config.get("aws_secret_key", ""),
+    }
+
+    # 验证是否配置了 balance
+    balance_cfg = build_balance_config(provider)
+    if not balance_cfg:
+        return JSONResponse(content={
+            "supported": False,
+            "error": "该渠道未配置余额查询（preferences.balance）",
+        })
+
+    # 验证 base_url
+    base_url = provider.get("base_url", "")
+    if base_url and not base_url.startswith(("http://", "https://")):
+        provider["base_url"] = f"https://{base_url}"
+
+    # 代理配置
+    proxy = (
+        safe_get(provider_config, "preferences", "proxy")
+        or provider_config.get("proxy")
+        or safe_get(app.state.config, "preferences", "proxy")
+    )
+
+    try:
+        from core.http import proxy_context
+
+        with proxy_context(proxy):
+            target_url = provider.get("base_url") or "https://localhost"
+            async with app.state.client_manager.get_client(target_url, proxy) as client:
+                # 插件拦截器（和 fetch_models 同样的逻辑）
+                enabled_plugins = safe_get(provider, "preferences", "enabled_plugins", default=None)
+                if enabled_plugins:
+                    from core.plugins.interceptors import InterceptedClient
+                    client = InterceptedClient(client, engine, provider, enabled_plugins)
+
+                result = await query_provider_balance(client, provider)
+                return JSONResponse(content=result)
+
+    except Exception as e:
+        logger.error(f"Balance query error: {e}")
+        return JSONResponse(
+            status_code=200,
+            content={
+                "supported": True,
+                "error": f"查询失败: {str(e)}"[:500],
+                "raw": None,
+            },
+        )
+
+
+@router.get("/v1/channels/balance_templates", dependencies=[Depends(rate_limit_dependency)])
+async def get_balance_templates(token: str = Depends(verify_admin_api_key)):
+    """
+    获取所有预置的余额查询模板列表，供前端展示选择。
+    """
+    from core.balance import list_balance_templates
+    return JSONResponse(content={"templates": list_balance_templates()})

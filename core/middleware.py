@@ -367,14 +367,6 @@ class StatsMiddleware:
                     model = request_model.model
                     current_info["model"] = model
 
-                    final_api_key = app.state.api_list[api_index]
-                    try:
-                        # ApiKeyRateLimitRegistry 会自动按需创建限流器
-                        await app.state.user_api_keys_rate_limit[final_api_key].next(model)
-                    except Exception:
-                        response = openai_error_response("Too many requests", 429)
-                        await response(scope, receive_wrapper, send)
-                        return
 
                     moderated_content = None
                     if request_model.request_type == "chat":

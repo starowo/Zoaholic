@@ -269,7 +269,15 @@ async def get_claude_payload(request, engine, provider, api_key=None):
         elif msg.role != "system":
             messages.append({"role": msg.role, "content": content})
         elif msg.role == "system":
-            system_prompt = content
+            if system_prompt is None:
+                system_prompt = content
+            elif isinstance(system_prompt, str) and isinstance(content, str):
+                system_prompt = system_prompt + "\n\n" + content
+            elif isinstance(system_prompt, list) and isinstance(content, list):
+                system_prompt = system_prompt + content
+            else:
+                # 类型不一致时（str vs list），以最新的为准并拼接旧内容为文本
+                system_prompt = (str(system_prompt) + "\n\n" + str(content)) if content else system_prompt
 
     conversation_len = len(messages) - 1
     message_index = 0

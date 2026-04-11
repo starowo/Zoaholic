@@ -180,6 +180,10 @@ async def process_request(
     else:
         api_key = None
 
+    # 将实际使用的 api_key 提前存入 request_info，供重试循环精确定位出错的 key
+    current_info_early = request_info_getter()
+    current_info_early["_used_api_key"] = api_key
+
     engine, stream_mode = get_engine(provider, endpoint, original_model)
 
     if stream_mode is not None:
@@ -223,7 +227,6 @@ async def process_request(
     
     # 记录渠道ID和上游key索引
     current_info["provider_id"] = channel_id
-    current_info["_current_api_key"] = api_key
     if api_key:
         try:
             # 从 provider_api_circular_list 中获取所有 keys
@@ -536,6 +539,10 @@ async def process_request_passthrough(
     else:
         api_key = None
 
+    # 将实际使用的 api_key 提前存入 request_info，供重试循环精确定位出错的 key
+    current_info_early = request_info_getter()
+    current_info_early["_used_api_key"] = api_key
+
     engine, stream_mode = get_engine(provider, endpoint, original_model)
     if stream_mode is not None:
         request.stream = stream_mode
@@ -626,7 +633,6 @@ async def process_request_passthrough(
         current_info["model"] = request.model
 
     current_info["provider_id"] = channel_id
-    current_info["_current_api_key"] = api_key
     if api_key:
         try:
             # 从 provider_api_circular_list 中获取所有 keys
@@ -1150,10 +1156,12 @@ class ModelRequestHandler:
                     api_key_count = provider_api_circular_list[channel_id].get_enabled_items_count()
                 except Exception:
                     api_key_count = provider_api_circular_list[channel_id].get_items_count()
-                # 优先从 process_request 保存的确切 key 获取，避免并发下 after_next_current() 取错
-                current_api = self.request_info_getter().get("_current_api_key")
-                if not current_api:
-                    current_api = await provider_api_circular_list[channel_id].after_next_current()
+                # ★ 修复：优先从 request_info 获取本次实际使用的 api_key，
+                # 避免并发场景下 after_next_current() 返回其他请求的 key，
+                # 导致冷却/禁用操作作用在错误的 key 上。
+                _current_info_for_key = self.request_info_getter()
+                current_api = _current_info_for_key.get("_used_api_key") or \
+                    await provider_api_circular_list[channel_id].after_next_current()
 
                 if (cooling_time > 0 and api_key_count > 1
                     and all(error not in error_message for error in exclude_error_rate_limit)):

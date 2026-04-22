@@ -133,10 +133,10 @@ async def get_image_payload(request, engine, provider, api_key=None):
         prompt = "Generate an image"  # fallback
 
     # 构建 payload
+    # gpt-image-2 默认且只返回 b64_json，不认 response_format 参数
     payload = {
         "model": original_model,
         "prompt": prompt,
-        "response_format": "b64_json",  # gpt-image-2 只支持 b64_json
     }
 
     # 合并用户传的 Image API 参数
@@ -156,9 +156,6 @@ async def get_image_payload(request, engine, provider, api_key=None):
         "stream_options", "logprobs", "top_logprobs",
     ):
         payload.pop(k, None)
-
-    # 强制 response_format 为 b64_json（防止 overrides 覆盖成 Chat Completions 的对象格式）
-    payload["response_format"] = "b64_json"
 
     return url, headers, payload
 

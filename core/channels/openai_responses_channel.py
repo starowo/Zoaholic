@@ -208,7 +208,13 @@ async def patch_passthrough_responses_payload(
         if final_inst:
             payload["instructions"] = final_inst
 
-    # 3) 清理 Responses API 常见不支持字段（透传也做兜底，避免上游严格校验报错）
+    # 3) max_tokens / max_completion_tokens → max_output_tokens（Responses API 专用字段名）
+    for k in ("max_tokens", "max_completion_tokens"):
+        v = payload.pop(k, None)
+        if v is not None and "max_output_tokens" not in payload:
+            payload["max_output_tokens"] = v
+
+    # 4) 清理 Responses API 常见不支持字段（透传也做兜底，避免上游严格校验报错）
     for k in (
         "temperature", "top_p",
         "presence_penalty", "frequency_penalty",
@@ -217,7 +223,7 @@ async def patch_passthrough_responses_payload(
     ):
         payload.pop(k, None)
 
-    # 4) 兼容性：部分上游/网关要求 Responses API 显式设置 store=false，否则会报错
+    # 5) 兼容性：部分上游/网关要求 Responses API 显式设置 store=false，否则会报错
     payload["store"] = False
 
     return payload
@@ -487,6 +493,8 @@ async def get_responses_payload(request, engine, provider, api_key=None):
     payload.pop("logprobs", None)
     payload.pop("top_logprobs", None)
     payload.pop("stream_options", None)
+    payload.pop("max_tokens", None)
+    payload.pop("max_completion_tokens", None)
 
     # 覆盖配置
     # 兼容性：部分上游/网关要求 Responses API 显式设置 store=false，否则会报错

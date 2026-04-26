@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { apiFetch } from '../lib/api';
+import { toastSuccess, toastError, toastWarning } from '../components/Toast';
 import {
   FolderOpen, File, RefreshCw, Download, Save, Trash2,
   ChevronRight, AlertTriangle, ArrowLeft,
@@ -177,7 +178,7 @@ export default function Workspace() {
       }
       await fetchTree(currentPath);
     } catch (err) {
-      alert(err instanceof Error ? err.message : '删除失败');
+      toastError(err instanceof Error ? err.message : '删除失败');
     }
   };
 
@@ -187,7 +188,7 @@ export default function Workspace() {
       const res = await apiFetch(`/v1/workspace/download?path=${encodeURIComponent(filePath)}`);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.detail || `下载失败 (${res.status})`);
+        toastError(data.detail || `下载失败 (${res.status})`);
         return;
       }
       const blob = await res.blob();
@@ -198,7 +199,7 @@ export default function Workspace() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      alert(err instanceof Error ? err.message : '下载失败');
+      toastError(err instanceof Error ? err.message : '下载失败');
     }
   };
 

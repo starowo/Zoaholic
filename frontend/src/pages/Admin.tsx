@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { apiFetch } from '../lib/api';
+import { toastSuccess, toastError, toastWarning, fmtErr } from '../components/Toast';
 import {
   Key, Plus, RefreshCw, Copy, Trash2, Edit, Save, X, Search,
   Folder, CheckCircle2, AlertCircle, AlertTriangle,
@@ -169,7 +170,7 @@ export default function Admin() {
         setFormApi(data.api_key);
       }
     } catch {
-      alert('生成密钥失败');
+      toastError('生成密钥失败');
     }
   };
 
@@ -223,7 +224,7 @@ export default function Admin() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(`获取模型失败: ${err.detail || res.status}`);
+        toastError(err, "获取模型失败");
         return;
       }
 
@@ -232,7 +233,7 @@ export default function Admin() {
       const models = (data.models || []).map((m: any) => m.id || m).filter(Boolean);
 
       if (models.length === 0) {
-        alert('当前分组下没有可用模型');
+        toastError('当前分组下没有可用模型');
         return;
       }
 
@@ -242,7 +243,7 @@ export default function Admin() {
       setSelectedModels(new Set(models.filter((m: string) => existing.has(m))));
       setIsFetchModelsOpen(true);
     } catch {
-      alert('获取模型失败');
+      toastError('获取模型失败');
     } finally {
       setFetchingModels(false);
     }
@@ -288,7 +289,7 @@ export default function Admin() {
   // ========== Save ==========
   const handleSave = async () => {
     if (!formApi.trim()) {
-      alert('API Key 不能为空');
+      toastWarning('API Key 不能为空');
       return;
     }
 
@@ -356,10 +357,10 @@ export default function Admin() {
         setIsSheetOpen(false);
         fetchData();
       } else {
-        alert('保存失败');
+        toastError('保存失败');
       }
     } catch {
-      alert('网络错误');
+      toastError('网络错误');
     }
   };
 
@@ -380,10 +381,10 @@ export default function Admin() {
         setKeys(newKeys);
         fetchData();
       } else {
-        alert('删除失败');
+        toastError('删除失败');
       }
     } catch {
-      alert('网络错误');
+      toastError('网络错误');
     }
   };
 
@@ -405,10 +406,10 @@ export default function Admin() {
         fetchData();
       } else {
         const data = await res.json().catch(() => ({}));
-        alert(`清空失败: ${data.detail || res.status}`);
+        toastError(data, "清空失败");
       }
     } catch {
-      alert('网络错误');
+      toastError('网络错误');
     }
   };
 
@@ -422,7 +423,7 @@ export default function Admin() {
   const handleAddCredits = async () => {
     const amount = parseFloat(creditsAmount);
     if (isNaN(amount) || amount <= 0) {
-      alert('请输入大于 0 的有效数字');
+      toastWarning('请输入大于 0 的有效数字');
       return;
     }
 
@@ -436,10 +437,10 @@ export default function Admin() {
         fetchData();
       } else {
         const data = await res.json().catch(() => ({}));
-        alert(`充值失败: ${data.detail || res.status}`);
+        toastError(data, "充值失败");
       }
     } catch {
-      alert('网络错误');
+      toastError('网络错误');
     }
   };
 

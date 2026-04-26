@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
+import { toastSuccess, toastError, toastWarning, fmtErr } from '../components/Toast';
 import { 
   Puzzle, 
   Settings2, 
@@ -184,7 +185,7 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
         try {
           preferences_patch[meta.key] = JSON.parse(t);
         } catch (e) {
-          alert(`插件 ${plugin.plugin_name} 配置 JSON 格式错误：${e instanceof Error ? e.message : 'invalid json'}`);
+          toastWarning(`插件 ${plugin.plugin_name} 配置 JSON 格式错误：${e instanceof Error ? e.message : 'invalid json'}`);
           return;
         }
       } else {
@@ -324,7 +325,7 @@ export function InterceptorSheet({ open, onOpenChange, allPlugins, enabledPlugin
                                 try {
                                   updateProviderConfigText(plugin.plugin_name, formatJsonText(providerConfigText.get(plugin.plugin_name) || ''));
                                 } catch (e: unknown) {
-                                  alert(`格式化失败：${e instanceof Error ? e.message : 'invalid json'}`);
+                                  toastError(`格式化失败：${e instanceof Error ? e.message : 'invalid json'}`);
                                 }
                               }}
                               className="text-xs font-medium text-muted-foreground hover:text-foreground px-2 py-1 bg-muted rounded disabled:opacity-50"

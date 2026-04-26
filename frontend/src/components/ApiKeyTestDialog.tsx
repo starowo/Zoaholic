@@ -15,6 +15,7 @@ import {
   Settings2,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { toastSuccess, toastError, toastWarning } from '../components/Toast';
 import { useAuthStore } from '../store/authStore';
 
 export interface ApiKeyObj {
@@ -221,7 +222,7 @@ export function ApiKeyTestDialog({
 
   const startAll = async () => {
     if (!canRun()) {
-      alert('请先设置模型，并确保至少有一个可测试的 Key');
+      toastWarning('请先设置模型，并确保至少有一个可测试的 Key');
       return;
     }
 

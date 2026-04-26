@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { apiFetch } from '../lib/api';
+import { toastSuccess, toastError, toastWarning } from '../components/Toast';
 import {
   Save, RefreshCw, AlertCircle, Zap, Shield,
   Timer, Database, Blocks, Plus, Trash2, Link, DollarSign
@@ -180,12 +181,12 @@ export default function Settings() {
     if (!token) return;
 
     if (cleanupAction === 'clear_fields' && cleanupFields.length === 0) {
-      alert('请至少选择一个要清空的字段');
+      toastWarning('请至少选择一个要清空的字段');
       return;
     }
 
     if (cleanupTimeMode === 'older_than_hours' && cleanupOlderThanHours < 1) {
-      alert('按小时清理时，小时数必须大于等于 1');
+      toastWarning('按小时清理时，小时数必须大于等于 1');
       return;
     }
 
@@ -220,12 +221,12 @@ export default function Settings() {
     if (!token) return;
 
     if (cleanupAction === 'clear_fields' && cleanupFields.length === 0) {
-      alert('请至少选择一个要清空的字段');
+      toastWarning('请至少选择一个要清空的字段');
       return;
     }
 
     if (cleanupConfirmText.trim().toUpperCase() !== requiredConfirmPhrase) {
-      alert(`请输入确认词 ${requiredConfirmPhrase} 后再执行`);
+      toastWarning(`请输入确认词 ${requiredConfirmPhrase} 后再执行`);
       return;
     }
 
@@ -273,7 +274,7 @@ export default function Settings() {
         const inp = parts[0] || '0';
         const out = parts[1] || '0';
         if (isNaN(Number(inp)) || isNaN(Number(out))) {
-          alert(`模型价格「${trimmed}」的价格值无效，请填写数字`);
+          toastWarning(`模型价格「${trimmed}」的价格值无效，请填写数字`);
           return;
         }
         validEntries.push([trimmed, `${inp},${out}`]);
@@ -289,13 +290,13 @@ export default function Settings() {
         body: JSON.stringify({ preferences: cleanedPreferences })
       });
       if (res.ok) {
-        alert('配置已保存成功');
+        toastSuccess('配置已保存成功');
       } else {
         const msg = await parseErrorMessage(res);
-        alert(`保存失败：${msg}`);
+        toastSuccess(`保存失败：${msg}`);
       }
     } catch {
-      alert('网络错误');
+      toastSuccess('网络错误');
     } finally {
       setSaving(false);
     }

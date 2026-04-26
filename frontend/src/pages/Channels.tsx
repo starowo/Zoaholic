@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState, KeyboardEvent, ClipboardEvent } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { apiFetch } from '../lib/api';
+import { toastSuccess, toastError, toastWarning, fmtErr } from '../components/Toast';
 import {
   Plus, Edit, Brain, Trash2, ArrowRight, RefreshCw,
   Server, X, CheckCircle2, Settings2, Copy, ToggleRight, ToggleLeft,
@@ -230,7 +231,7 @@ function CoolingKeyRow({ idx, keyObj, remainSec, totalDuration, focused, onFocus
           )}
         </div>
         {!focused && (
-          <button onClick={onRecover} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 cursor-pointer flex-shrink-0 relative z-[2]">恢复</button>
+          <button onClick={onRecover} className="text-[11px] px-2 py-0.5 rounded border border-emerald-500/50 bg-emerald-500/20 text-emerald-400 font-medium hover:bg-emerald-500/30 hover:border-emerald-400 cursor-pointer flex-shrink-0 relative z-[2] transition-colors">恢复</button>
         )}
         <div className="actions flex items-center gap-1 flex-shrink-0 relative z-[2]">
           <button onClick={onToggle} className="text-muted-foreground" title="禁用"><ToggleRight className="w-5 h-5" /></button>
@@ -563,10 +564,10 @@ export default function Channels() {
   const queryAllBalances = async (silent = false) => {
     if (!formData || !formData.base_url) return;
     const balanceCfg = formData.preferences?.balance;
-    if (!balanceCfg) { if (!silent) alert('该渠道未配置余额查询（preferences.balance）'); return; }
+    if (!balanceCfg) { if (!silent) toastWarning('该渠道未配置余额查询（preferences.balance）'); return; }
 
     const activeKeys = formData.api_keys.filter(k => k.key.trim() && !k.disabled);
-    if (activeKeys.length === 0) { if (!silent) alert('没有可用的 Key'); return; }
+    if (activeKeys.length === 0) { if (!silent) toastError('没有可用的 Key'); return; }
 
     setBalanceLoading(true);
     const results: Record<string, BalanceResult> = {};
@@ -644,7 +645,7 @@ export default function Channels() {
     const activeKeys = formData.api_keys.filter(k => !k.disabled && k.key).map(k => k.key);
     if (!activeKeys.length) return;
     navigator.clipboard.writeText(activeKeys.join('\n'));
-    alert('已复制所有有效密钥');
+    toastSuccess('已复制所有有效密钥');
   };
 
   const clearAllKeys = () => {
@@ -684,7 +685,7 @@ export default function Channels() {
   const openFetchModelsDialog = async () => {
     const firstKey = formData?.api_keys.find(k => k.key.trim() && !k.disabled);
     if (!formData?.base_url || !firstKey) {
-      alert('请先填写 Base URL 和至少一个启用的 API Key');
+      toastWarning('请先填写 Base URL 和至少一个启用的 API Key');
       return;
     }
 
@@ -705,7 +706,7 @@ export default function Channels() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(`获取模型失败: ${err.detail || err.error || err.message || res.status}`);
+        toastError(err, "获取模型失败");
         return;
       }
 
@@ -725,7 +726,7 @@ export default function Channels() {
 
       const uniqueModels: string[] = Array.from(new Set(models));
       if (uniqueModels.length === 0) {
-        alert('未获取到任何模型');
+        toastError('未获取到任何模型');
         return;
       }
 
@@ -734,7 +735,7 @@ export default function Channels() {
       setSelectedModels(new Set(uniqueModels.filter(m => existing.has(m))));
       setIsFetchModelsOpen(true);
     } catch (err: any) {
-      alert(`获取模型失败: ${err?.message || '网络错误'}`);
+      toastError(`获取模型失败: ${err?.message || (typeof err === 'object' ? JSON.stringify(err) : String(err))}`);
     } finally {
       setFetchingModels(false);
     }
@@ -797,7 +798,7 @@ export default function Channels() {
       const pretty = JSON.stringify(obj, null, 2);
       setter(pretty);
     } catch (err: any) {
-      alert(`${fieldName} JSON 格式错误: ${err.message}`);
+      toastWarning(`${fieldName} JSON 格式错误: ${err.message}`);
     }
   };
 
@@ -838,12 +839,12 @@ export default function Channels() {
       });
       if (res.ok) {
         setProviders(newProviders);
-        alert(`已删除渠道 "${name}"`);
+        toastError(`已删除渠道 "${name}"`);
       } else {
-        alert('删除失败');
+        toastError('删除失败');
       }
     } catch {
-      alert('网络错误');
+      toastError('网络错误');
     }
   };
 
@@ -862,10 +863,10 @@ export default function Channels() {
       if (res.ok) {
         setProviders(newProviders);
       } else {
-        alert('操作失败');
+        toastError('操作失败');
       }
     } catch {
-      alert('网络错误');
+      toastError('网络错误');
     }
   };
 
@@ -874,7 +875,7 @@ export default function Channels() {
     const originalName = copy.provider || 'channel';
     copy.provider = `${originalName}_copy`;
     openModal(copy, null);
-    alert('已复制渠道配置，请修改后保存');
+    toastSuccess('已复制渠道配置，请修改后保存');
   };
 
   // ── 子渠道操作 ──
@@ -891,8 +892,8 @@ export default function Channels() {
         body: JSON.stringify({ providers: newProviders }),
       });
       if (res.ok) setProviders(newProviders);
-      else alert('操作失败');
-    } catch { alert('网络错误'); }
+      else toastError('操作失败');
+    } catch { toastError('网络错误'); }
   };
 
   const handleDeleteSubChannel = async (parentIdx: number, subIdx: number) => {
@@ -910,8 +911,8 @@ export default function Channels() {
         body: JSON.stringify({ providers: newProviders }),
       });
       if (res.ok) { setProviders(newProviders); }
-      else alert('删除失败');
-    } catch { alert('网络错误'); }
+      else toastError('删除失败');
+    } catch { toastError('网络错误'); }
   };
 
   const openSubChannelEdit = (parentIdx: number, subIdx: number) => {
@@ -1076,7 +1077,7 @@ export default function Channels() {
 
   const handleSave = async () => {
     if (!formData?.provider) {
-      alert("渠道名称为必填项");
+      toastWarning("渠道名称为必填项");
       return;
     }
 
@@ -1094,7 +1095,7 @@ export default function Channels() {
     try {
       if (overridesJson.trim()) overridesObj = JSON.parse(overridesJson);
     } catch {
-      alert("高级配置 JSON 格式错误");
+      toastWarning("高级配置 JSON 格式错误");
       return;
     }
 
@@ -1102,7 +1103,7 @@ export default function Channels() {
     try {
       if (statusCodeOverridesJson.trim()) statusCodeOverridesObj = JSON.parse(statusCodeOverridesJson) as Record<string, number>;
     } catch {
-      alert("错误码映射 JSON 格式错误");
+      toastWarning("错误码映射 JSON 格式错误");
       return;
     }
 
@@ -1131,7 +1132,7 @@ export default function Channels() {
         const inp = parts[0] || '0';
         const out = parts[1] || '0';
         if (isNaN(Number(inp)) || isNaN(Number(out))) {
-          alert(`模型价格「${trimmed}」的价格值无效，请填写数字`);
+          toastWarning(`模型价格「${trimmed}」的价格值无效，请填写数字`);
           return;
         }
         validEntries.push([trimmed, `${inp},${out}`]);
@@ -1235,10 +1236,10 @@ export default function Channels() {
         setIsModalOpen(false);
         setEditingSubChannel(null);
       } else {
-        alert("保存失败");
+        toastError("保存失败");
       }
     } catch {
-      alert("网络错误");
+      toastError("网络错误");
     }
   };
 
@@ -1920,7 +1921,7 @@ export default function Channels() {
                           )}
                           {!isFocused && isPermanent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 dark:text-red-400 font-medium flex-shrink-0 relative z-[2]">永久禁用</span>}
                           {!isFocused && isPermanent && (
-                            <button onClick={async () => { await apiFetch('/v1/channels/key_status/re_enable', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ provider: providerName, key: keyObj.key }) }); refreshKeyStatus(); }} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 cursor-pointer flex-shrink-0 relative z-[2]">恢复</button>
+                            <button onClick={async () => { await apiFetch('/v1/channels/key_status/re_enable', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ provider: providerName, key: keyObj.key }) }); refreshKeyStatus(); }} className="text-[11px] px-2 py-0.5 rounded border border-emerald-500/50 bg-emerald-500/20 text-emerald-400 font-medium hover:bg-emerald-500/30 hover:border-emerald-400 cursor-pointer flex-shrink-0 relative z-[2] transition-colors">恢复</button>
                           )}
                           <button onClick={() => toggleKeyDisabled(idx)} className={`relative z-[2] ${isGrayed ? 'text-muted-foreground' : 'text-emerald-500'}`} title={keyObj.disabled ? "启用" : "禁用"}>
                             {keyObj.disabled ? <ToggleLeft className="w-5 h-5" /> : <ToggleRight className="w-5 h-5" />}
@@ -2093,22 +2094,22 @@ export default function Channels() {
                                     onClick={async () => {
                                       const firstKey = formData.api_keys.find(k => k.key.trim() && !k.disabled);
                                       const baseUrl = sub.base_url || formData.base_url;
-                                      if (!baseUrl || !firstKey) { alert('需要 Base URL 和至少一个启用的 API Key'); return; }
+                                      if (!baseUrl || !firstKey) { toastError('需要 Base URL 和至少一个启用的 API Key'); return; }
                                       try {
                                         const res = await apiFetch('/v1/channels/fetch_models', {
                                           method: 'POST',
                                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                                           body: JSON.stringify({ engine: sub.engine, base_url: baseUrl, api_key: firstKey.key, preferences: sub.preferences }),
                                         });
-                                        if (!res.ok) { const err = await res.json().catch(() => ({})); alert(`获取失败: ${err.detail || err.error || res.status}`); return; }
+                                        if (!res.ok) { const err = await res.json().catch(() => ({})); toastError(`获取失败: ${fmtErr(err, res.status)}`); return; }
                                         const data = (await res.json()) as any;
                                         const rawModels: unknown[] = Array.isArray(data) ? data : Array.isArray(data?.models) ? data.models : Array.isArray(data?.data) ? data.data.map((m: any) => m?.id) : [];
                                         const models = rawModels.map(m => String(m)).filter(Boolean);
-                                        if (models.length === 0) { alert('未获取到任何模型'); return; }
+                                        if (models.length === 0) { toastError('未获取到任何模型'); return; }
                                         const next = [...formData.sub_channels];
                                         next[subIdx] = { ...next[subIdx], models: Array.from(new Set([...sub.models, ...models])) };
                                         updateFormData('sub_channels', next);
-                                      } catch (err: any) { alert(`获取失败: ${err?.message || '网络错误'}`); }
+                                      } catch (err: any) { toastError(`获取失败: ${err?.message || (typeof err === 'object' ? JSON.stringify(err) : String(err))}`); }
                                     }}
                                     disabled={!sub.engine}
                                     className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded flex items-center gap-1 disabled:opacity-50"

@@ -280,7 +280,10 @@ def get_engine(provider, endpoint=None, original_model=""):
     if "stream" in safe_get(provider, "preferences", "post_body_parameter_overrides", default={}):
         stream = safe_get(provider, "preferences", "post_body_parameter_overrides", "stream")
 
-    return engine, stream
+    # stream_mode: auto(默认) / force_stream / force_non_stream
+    stream_mode = safe_get(provider, "preferences", "stream_mode", default="auto")
+
+    return engine, stream, stream_mode
 
 def get_proxy(proxy, client_config = {}):
     if proxy:
@@ -302,7 +305,7 @@ def get_proxy(proxy, client_config = {}):
 
 async def update_initial_model(provider):
     try:
-        engine, stream_mode = get_engine(provider, endpoint=None, original_model="")
+        engine, stream_mode, _ = get_engine(provider, endpoint=None, original_model="")
         # print("engine", engine, provider)
         api_url = provider['base_url']
         api = provider['api']

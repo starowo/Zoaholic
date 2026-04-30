@@ -221,14 +221,43 @@ async def get_claude_payload(request, engine, provider, api_key=None):
                         else:
                             b64_data = data_uri
                     if b64_data:
-                        content.append({
-                            "type": "document" if not mime_type.startswith("image/") else "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": mime_type,
-                                "data": b64_data,
-                            }
-                        })
+                        if mime_type.startswith("image/"):
+                            content.append({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mime_type,
+                                    "data": b64_data,
+                                }
+                            })
+                        elif mime_type == "application/pdf":
+                            content.append({
+                                "type": "document",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mime_type,
+                                    "data": b64_data,
+                                }
+                            })
+                        else:
+                            # 文本类文件：解码 base64 转为内联文本
+                            import base64 as _b64
+                            try:
+                                decoded_text = _b64.b64decode(b64_data).decode("utf-8")
+                                fname = getattr(item.file, "filename", "") or ""
+                                if fname:
+                                    decoded_text = f"📄 {fname}\n```\n{decoded_text}\n```"
+                                content.append({"type": "text", "text": decoded_text})
+                            except Exception:
+                                # 解码失败，尝试原样发 document（可能报错）
+                                content.append({
+                                    "type": "document",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime_type,
+                                        "data": b64_data,
+                                    }
+                                })
         else:
             content = msg.content
             tool_calls = msg.tool_calls

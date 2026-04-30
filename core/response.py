@@ -223,12 +223,27 @@ def _save_upstream_response_for_non_stream(response):
         logger.error(f"Error saving upstream response for non-stream: {str(e)}")
 
 
+def _log_upstream_request(url, payload):
+    """在 fetch 层记录实际发给上游的请求体（force_stream 等插件修改后的真实值）"""
+    try:
+        info = request_info.get()
+        if info.get("raw_data_expires_at") is None:
+            return
+        upstream_payload = {k: v for k, v in payload.items() if k != 'file'}
+        info["upstream_request_body"] = truncate_for_logging(upstream_payload)
+        info["upstream_request_url"] = url
+    except Exception as e:
+        logger.error(f"Error logging upstream request in fetch layer: {e}")
+
+
 async def fetch_response(client, url, headers, payload, engine, model, timeout=200, enabled_plugins=None):
     """
     处理非流式 API 响应，通过渠道适配器进行分发
     """
     from .channels import get_channel
     from .plugins.interceptors import apply_response_interceptors
+    
+    _log_upstream_request(url, payload)
     
     channel = get_channel(engine)
     if channel and channel.response_adapter:
@@ -279,6 +294,8 @@ async def fetch_response_stream(
     """
     from .channels import get_channel
     from .plugins.interceptors import apply_response_interceptors
+    
+    _log_upstream_request(url, payload)
     
     channel = get_channel(engine)
     if channel and channel.stream_adapter:

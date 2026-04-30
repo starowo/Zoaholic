@@ -2573,9 +2573,49 @@ export default function Channels() {
                       </div>
                     </div>
 
-                    <div>
-                      <label className="text-sm font-medium text-foreground mb-1.5 block">代理 (Proxy)</label>
-                      <input type="url" value={formData.preferences.proxy || ''} onChange={e => updatePreference('proxy', e.target.value)} placeholder="http://127.0.0.1:7890" className="w-full bg-background border border-border px-3 py-2 rounded-lg text-sm text-foreground" />
+                    <div className="flex gap-3 items-end">
+                      <div className="flex-1 min-w-0">
+                        <label className="text-sm font-medium text-foreground mb-1.5 block">代理 (Proxy)</label>
+                        <input type="url" value={formData.preferences.proxy || ''} onChange={e => updatePreference('proxy', e.target.value)} placeholder="http://127.0.0.1:7890" className="w-full bg-background border border-border px-3 py-2 rounded-lg text-sm text-foreground" />
+                      </div>
+                      {/* 流式模式三段式 switch — 紧凑版 */}
+                      <div className="shrink-0">
+                        <label className="text-sm font-medium text-foreground mb-1.5 block">流式</label>
+                        <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5" title={
+                          (formData.preferences.stream_mode || 'auto') === 'auto'
+                            ? '跟随客户端请求'
+                            : formData.preferences.stream_mode === 'force_stream'
+                            ? '非流式→内部走流式打上游→拼装返回'
+                            : '流式→内部走非流打上游→拆SSE返回'
+                        }>
+                          {[
+                            { value: 'force_non_stream', label: '非流', tip: '强制非流：流式请求→非流打上游→拆SSE返回' },
+                            { value: 'auto', label: '自动', tip: '跟随客户端请求' },
+                            { value: 'force_stream', label: '强流', tip: '强制流：非流请求→流式打上游→拼装返回' },
+                          ].map(opt => {
+                            const current = formData.preferences.stream_mode || 'auto';
+                            const isActive = current === opt.value;
+                            return (
+                              <button
+                                key={opt.value}
+                                title={opt.tip}
+                                onClick={() => updatePreference('stream_mode', opt.value)}
+                                className={`px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-all ${
+                                  isActive
+                                    ? opt.value === 'force_stream'
+                                      ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                      : opt.value === 'force_non_stream'
+                                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                      : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-muted-foreground/10 border border-transparent'
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
                     <div>
                       <label className="text-sm font-medium text-foreground mb-1.5 block">系统提示词 (System Prompt)</label>

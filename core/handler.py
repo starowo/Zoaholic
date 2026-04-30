@@ -187,10 +187,10 @@ async def process_request(
     current_info_early = request_info_getter()
     current_info_early["_used_api_key"] = api_key
 
-    engine, stream_mode = get_engine(provider, endpoint, original_model)
+    engine, stream_override, stream_mode = get_engine(provider, endpoint, original_model)
 
-    if stream_mode is not None:
-        request.stream = stream_mode
+    if stream_override is not None:
+        request.stream = stream_override
 
     channel_id = f"{provider['provider']}"
     if engine != "moderation":
@@ -218,10 +218,7 @@ async def process_request(
                                     if k.lower() not in ("authorization", "x-api-key", "api-key")}
             current_info["upstream_request_headers"] = json.dumps(safe_upstream_headers, ensure_ascii=False)
             
-            # 使用深度截断，保留结构同时限制大小
-            # 使用 asyncio.to_thread 避免大请求体阻塞事件循环
-            upstream_payload = {k: v for k, v in payload.items() if k != 'file'}
-            current_info["upstream_request_body"] = await asyncio.to_thread(truncate_for_logging, upstream_payload)
+            # upstream_request_body 已移到 response.py fetch 层记录（能抓到 force_stream 等插件修改后的真实值）
         except Exception as e:
             logger.error(f"Error saving upstream request data: {str(e)}")
     # 确保日志中一定记录模型名（使用当前请求对象上的 model）
@@ -247,49 +244,111 @@ async def process_request(
     # 获取该渠道启用的插件列表
     enabled_plugins = safe_get(provider, "preferences", "enabled_plugins", default=None)
 
+    # 判断实际上游流式模式（stream_mode 核心逻辑）
+    client_wants_stream = bool(request.stream)
+    if stream_mode == "force_stream":
+        upstream_stream = True
+    elif stream_mode == "force_non_stream":
+        upstream_stream = False
+    else:  # auto
+        upstream_stream = client_wants_stream
+
+    # 强制流式时确保 payload 里也带 stream=True
+    if upstream_stream and not client_wants_stream and stream_mode == "force_stream":
+        payload = dict(payload)
+        payload["stream"] = True
+        logger.info(f"[stream_mode] force_stream: client=non-stream, upstream=stream, model={original_model}")
+    elif not upstream_stream and client_wants_stream and stream_mode == "force_non_stream":
+        payload = dict(payload)
+        payload["stream"] = False
+        logger.info(f"[stream_mode] force_non_stream: client=stream, upstream=non-stream, model={original_model}")
+
+    # Gemini/Vertex URL 适配：流式和非流式用不同端点
+    if upstream_stream and "generateContent" in url and "streamGenerateContent" not in url:
+        url = url.replace("generateContent", "streamGenerateContent")
+    elif not upstream_stream and "streamGenerateContent" in url:
+        url = url.replace("streamGenerateContent", "generateContent")
+
     try:
         async with app.state.client_manager.get_client(url, proxy) as client:
-            if request.stream:
+            if upstream_stream:
                 generator = fetch_response_stream(client, url, headers, payload, engine, original_model, timeout_value, enabled_plugins=enabled_plugins)
                 wrapped_generator, first_response_time = await error_handling_wrapper(
-                    generator, channel_id, engine, request.stream,
-                    app.state.error_triggers, keepalive_interval=keepalive_interval,
-                    last_message_role=last_message_role,
-                    request_url=url,
-                    app=app,
-                )
-                response = LoggingStreamingResponse(
-                    wrapped_generator,
-                    media_type="text/event-stream",
-                    current_info=current_info,
-                    app=app,
-                    debug=is_debug
-                )
-            else:
-                generator = fetch_response(client, url, headers, payload, engine, original_model, timeout_value, enabled_plugins=enabled_plugins)
-                wrapped_generator, first_response_time = await error_handling_wrapper(
-                    generator, channel_id, engine, request.stream,
+                    generator, channel_id, engine, True,
                     app.state.error_triggers, keepalive_interval=keepalive_interval,
                     last_message_role=last_message_role,
                     request_url=url,
                     app=app,
                 )
 
-                # 处理音频和其他二进制响应
-                if endpoint == "/v1/audio/speech":
-                    if isinstance(wrapped_generator, bytes):
-                        response = Response(content=wrapped_generator, media_type="audio/mpeg")
-                else:
-                    # 非流式响应也需要记录统计
-                    async def non_stream_iter():
-                        first_element = await anext(wrapped_generator)
-                        yield first_element
-                        async for item in wrapped_generator:
-                            yield item
-                    
+                if client_wants_stream:
+                    # 正常流式：直接转发
                     response = LoggingStreamingResponse(
-                        non_stream_iter(),
+                        wrapped_generator,
+                        media_type="text/event-stream",
+                        current_info=current_info,
+                        app=app,
+                        debug=is_debug
+                    )
+                else:
+                    # force_stream：上游流式 → 拼装成非流式 JSON 返回客户端
+                    from .stream_convert import assemble_stream_to_json
+                    assembled = await assemble_stream_to_json(wrapped_generator)
+
+                    async def force_stream_iter():
+                        yield assembled
+
+                    response = LoggingStreamingResponse(
+                        force_stream_iter(),
                         media_type="application/json",
+                        current_info=current_info,
+                        app=app,
+                        debug=is_debug
+                    )
+            else:
+                generator = fetch_response(client, url, headers, payload, engine, original_model, timeout_value, enabled_plugins=enabled_plugins)
+                wrapped_generator, first_response_time = await error_handling_wrapper(
+                    generator, channel_id, engine, False,
+                    app.state.error_triggers, keepalive_interval=keepalive_interval,
+                    last_message_role=last_message_role,
+                    request_url=url,
+                    app=app,
+                )
+
+                if not client_wants_stream:
+                    # 正常非流式
+                    if endpoint == "/v1/audio/speech":
+                        if isinstance(wrapped_generator, bytes):
+                            response = Response(content=wrapped_generator, media_type="audio/mpeg")
+                    else:
+                        async def non_stream_iter():
+                            first_element = await anext(wrapped_generator)
+                            yield first_element
+                            async for item in wrapped_generator:
+                                yield item
+
+                        response = LoggingStreamingResponse(
+                            non_stream_iter(),
+                            media_type="application/json",
+                            current_info=current_info,
+                            app=app,
+                            debug=is_debug
+                        )
+                else:
+                    # force_non_stream：上游非流式 → 拆成 SSE 返回客户端
+                    from .stream_convert import convert_json_to_sse
+                    first_element = await anext(wrapped_generator)
+
+                    async def force_non_stream_iter():
+                        if isinstance(first_element, dict):
+                            async for sse_chunk in convert_json_to_sse(first_element, original_model):
+                                yield sse_chunk
+                        else:
+                            yield first_element
+
+                    response = LoggingStreamingResponse(
+                        force_non_stream_iter(),
+                        media_type="text/event-stream",
                         current_info=current_info,
                         app=app,
                         debug=is_debug
@@ -350,6 +409,9 @@ async def _fetch_passthrough_stream(client, url, headers, payload, timeout, engi
     注意：使用特殊的超时配置，read timeout 设置为 None 以支持
     Google Search grounding 等需要长时间处理的操作。
     """
+    from .response import _log_upstream_request
+    _log_upstream_request(url, payload)
+    
     # 为流式请求创建特殊的超时配置
     # read timeout 设置为 None，因为：
     # 1. Gemini 使用 Google Search 时，搜索可能需要较长时间
@@ -385,6 +447,9 @@ async def _fetch_passthrough_response(client, url, headers, payload, timeout, en
     
     直接转发上游 JSON 响应，不做任何格式转换
     """
+    from .response import _log_upstream_request
+    _log_upstream_request(url, payload)
+    
     import time as _time
     t0 = _time.time()
     from core.plugins.interceptors import apply_response_interceptors
@@ -546,9 +611,9 @@ async def process_request_passthrough(
     current_info_early = request_info_getter()
     current_info_early["_used_api_key"] = api_key
 
-    engine, stream_mode = get_engine(provider, endpoint, original_model)
-    if stream_mode is not None:
-        request.stream = stream_mode
+    engine, stream_override, stream_mode = get_engine(provider, endpoint, original_model)
+    if stream_override is not None:
+        request.stream = stream_override
 
     channel = get_channel(engine)
     adapter = (channel.passthrough_adapter if channel else None) or (channel.request_adapter if channel else None)
@@ -628,9 +693,7 @@ async def process_request_passthrough(
             if k.lower() not in ("authorization", "x-api-key", "api-key", "x-goog-api-key")
         }
         current_info["upstream_request_headers"] = json.dumps(safe_upstream_headers, ensure_ascii=False)
-        upstream_payload = {k: v for k, v in payload.items() if k != "file"}
-        # 使用 asyncio.to_thread 避免大请求体阻塞事件循环
-        current_info["upstream_request_body"] = await asyncio.to_thread(truncate_for_logging, upstream_payload)
+        # upstream_request_body 已移到 response.py fetch 层记录
 
     if getattr(request, "model", None):
         current_info["model"] = request.model

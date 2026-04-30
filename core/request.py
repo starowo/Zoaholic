@@ -191,7 +191,7 @@ async def prepare_request_payload(provider, request_data):
     request = RequestModel(**request_data)
 
     original_model = model_dict[request.model]
-    engine, _ = get_engine(provider, endpoint=None, original_model=original_model)
+    engine, _, _ = get_engine(provider, endpoint=None, original_model=original_model)
 
     url, headers, payload = await get_payload(request, engine, provider, api_key=provider['api'])
 

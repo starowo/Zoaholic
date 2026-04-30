@@ -236,8 +236,29 @@ async def get_gpt_payload(request, engine, provider, api_key=None):
                             else:
                                 pass
                         else:
-                            from fastapi import HTTPException
-                            raise HTTPException(status_code=400, detail="当前渠道仅支持图片输入，不支持非图片文件。如需传输文档，请使用其他支持该能力的渠道。")
+                            # 非图片文件：尝试解码文本类文件为内联文本
+                            mime = getattr(item.file, "mime_type", "") or ""
+                            is_text = (
+                                mime.startswith("text/")
+                                or mime in (
+                                    "application/json", "application/xml", "application/yaml",
+                                    "application/x-yaml", "application/javascript",
+                                    "application/typescript", "application/sql",
+                                    "application/x-python", "application/toml",
+                                    "application/csv", "application/ld+json",
+                                )
+                            )
+                            if is_text and getattr(item.file, "data", None):
+                                import base64 as _b64
+                                try:
+                                    decoded = _b64.b64decode(item.file.data).decode("utf-8")
+                                    fname = getattr(item.file, "filename", "") or ""
+                                    if fname:
+                                        decoded = f"📄 {fname}\n```\n{decoded}\n```"
+                                    content.append({"type": "text", "text": decoded})
+                                except Exception:
+                                    pass  # 解码失败静默跳过
+                            # 其他类型静默跳过
         else:
             content = msg.content
             if msg.role == "system" and "o3-mini" in original_model and not content.startswith("Formatting re-enabled"):

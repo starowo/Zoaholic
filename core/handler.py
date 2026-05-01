@@ -296,7 +296,7 @@ async def process_request(
                     assembled = await assemble_stream_to_json(wrapped_generator)
 
                     async def force_stream_iter():
-                        yield assembled
+                        yield json.dumps(assembled, ensure_ascii=False)
 
                     response = LoggingStreamingResponse(
                         force_stream_iter(),
@@ -713,11 +713,35 @@ async def process_request_passthrough(
     proxy = safe_get(app.state.config, "preferences", "proxy", default=None)
     proxy = safe_get(provider, "preferences", "proxy", default=proxy)
 
+    # 透传路径的 stream_mode 处理（与非透传路径对齐）
+    client_wants_stream = bool(request.stream)
+    if stream_mode == "force_stream":
+        upstream_stream = True
+    elif stream_mode == "force_non_stream":
+        upstream_stream = False
+    else:
+        upstream_stream = client_wants_stream
+
+    if upstream_stream and not client_wants_stream and stream_mode == "force_stream":
+        payload = dict(payload) if not isinstance(payload, dict) else {**payload}
+        payload["stream"] = True
+        logger.info(f"[stream_mode/passthrough] force_stream: client=non-stream, upstream=stream, model={original_model}")
+    elif not upstream_stream and client_wants_stream and stream_mode == "force_non_stream":
+        payload = dict(payload) if not isinstance(payload, dict) else {**payload}
+        payload["stream"] = False
+        logger.info(f"[stream_mode/passthrough] force_non_stream: client=stream, upstream=non-stream, model={original_model}")
+
+    # Gemini/Vertex URL 适配
+    if upstream_stream and "generateContent" in url and "streamGenerateContent" not in url:
+        url = url.replace("generateContent", "streamGenerateContent")
+    elif not upstream_stream and "streamGenerateContent" in url:
+        url = url.replace("streamGenerateContent", "generateContent")
+
     try:
         async with app.state.client_manager.get_client(url, proxy) as client:
             last_message_role = safe_get(request, "messages", -1, "role", default=None)
 
-            if request.stream:
+            if upstream_stream:
                 # 透传模式：使用原始流处理，不做格式转换
                 generator = _fetch_passthrough_stream(
                     client, url, headers, payload, timeout_value,
@@ -728,13 +752,30 @@ async def process_request_passthrough(
                 wrapped_generator, first_response_time = await _passthrough_error_wrapper(
                     generator, channel_id
                 )
-                response = LoggingStreamingResponse(
-                    wrapped_generator,
-                    media_type="text/event-stream",
-                    current_info=current_info,
-                    app=app,
-                    debug=is_debug,
-                )
+
+                if client_wants_stream:
+                    response = LoggingStreamingResponse(
+                        wrapped_generator,
+                        media_type="text/event-stream",
+                        current_info=current_info,
+                        app=app,
+                        debug=is_debug,
+                    )
+                else:
+                    # force_stream 透传：上游流式 → 拼装成非流式 JSON
+                    from .stream_convert import assemble_stream_to_json
+                    assembled = await assemble_stream_to_json(wrapped_generator)
+
+                    async def force_stream_passthrough_iter():
+                        yield json.dumps(assembled, ensure_ascii=False)
+
+                    response = LoggingStreamingResponse(
+                        force_stream_passthrough_iter(),
+                        media_type="application/json",
+                        current_info=current_info,
+                        app=app,
+                        debug=is_debug,
+                    )
             else:
                 # 透传模式：使用原始响应处理，不做格式转换
                 generator = _fetch_passthrough_response(
@@ -747,17 +788,36 @@ async def process_request_passthrough(
                     generator, channel_id
                 )
 
-                async def passthrough_iter():
-                    async for chunk in wrapped_generator:
-                        yield chunk
+                if client_wants_stream:
+                    # force_non_stream 透传：上游非流式 → 拆成 SSE
+                    from .stream_convert import convert_json_to_sse
 
-                response = LoggingStreamingResponse(
-                    passthrough_iter(),
-                    media_type="application/json",
-                    current_info=current_info,
-                    app=app,
-                    debug=is_debug,
-                )
+                    async def force_non_stream_passthrough_iter():
+                        raw = b""
+                        async for chunk in wrapped_generator:
+                            raw += chunk if isinstance(chunk, bytes) else chunk.encode()
+                        async for sse_line in convert_json_to_sse(raw):
+                            yield sse_line
+
+                    response = LoggingStreamingResponse(
+                        force_non_stream_passthrough_iter(),
+                        media_type="text/event-stream",
+                        current_info=current_info,
+                        app=app,
+                        debug=is_debug,
+                    )
+                else:
+                    async def passthrough_iter():
+                        async for chunk in wrapped_generator:
+                            yield chunk
+
+                    response = LoggingStreamingResponse(
+                        passthrough_iter(),
+                        media_type="application/json",
+                        current_info=current_info,
+                        app=app,
+                        debug=is_debug,
+                    )
 
             current_info["first_response_time"] = first_response_time
     except (Exception, HTTPException, asyncio.CancelledError, httpx.ReadError,

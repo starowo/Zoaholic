@@ -43,7 +43,9 @@ async def assemble_stream_to_json(stream_generator):
             if isinstance(chunk, dict) and "error" in chunk:
                 return chunk
 
-            if not isinstance(chunk, str):
+            if isinstance(chunk, bytes):
+                chunk = chunk.decode("utf-8", errors="replace")
+            elif not isinstance(chunk, str):
                 continue
 
             for line in chunk.split("\n"):
